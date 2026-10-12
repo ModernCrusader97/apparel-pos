@@ -503,9 +503,23 @@ def backup_api(b):
     return r
 
 
+def prune_sessions():
+    """만료된 세션을 비운다.
+
+    평소에는 그 토큰이 다시 올 때 지워지지만, 다시 안 오는 토큰(브라우저를 닫은
+    태블릿 등)은 영원히 남는다. 치워 줄 사람이 없으면 메모리에 쌓인다.
+    """
+    cutoff = datetime.now()
+    for tok in [t for t, v in list(SESSIONS.items()) if v["exp"] < cutoff]:
+        SESSIONS.pop(tok, None)
+    return len(SESSIONS)
+
+
 def backup_loop():
-    """30분마다 깨어나 '오늘 백업이 없으면' 만든다. 서버가 꺼졌다 켜져도 하루 한 번은 남는다."""
+    """30분마다 깨어나 '오늘 백업이 없으면' 만든다. 서버가 꺼졌다 켜져도 하루 한 번은 남는다.
+    만료 세션 정리도 여기에 얹는다 — 이것만을 위해 스레드를 더 띄울 이유가 없다."""
     while True:
+        prune_sessions()
         try:
             if not os.path.exists(os.path.join(BACKUP_DIR, f"pos-{datetime.now():%Y%m%d}.db")):
                 print("자동 백업:", backup_now()["file"])

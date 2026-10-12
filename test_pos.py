@@ -84,6 +84,19 @@ for i in range(pos.LOGIN_PRUNE_AT + 50):
 assert len(pos.LOGIN_FAILS) <= pos.LOGIN_PRUNE_AT + 1, len(pos.LOGIN_FAILS)
 pos.LOGIN_FAILS.clear()
 
+# -------------------------------------------------------------- 만료 세션 정리
+pos.SESSIONS.clear()
+live_tok, _ = pos.login("admin", "owner123")
+pos.SESSIONS["dead1"] = {"uid": 1, "name": "x", "role": "staff",
+                         "exp": pos.datetime.now() - pos.timedelta(seconds=1)}
+pos.SESSIONS["dead2"] = {"uid": 1, "name": "x", "role": "staff",
+                         "exp": pos.datetime.now() - pos.timedelta(days=3)}
+assert len(pos.SESSIONS) == 3
+left = pos.prune_sessions()
+assert left == 1 and list(pos.SESSIONS) == [live_tok], pos.SESSIONS
+assert pos.prune_sessions() == 1, "두 번 돌려도 멀쩡한 세션은 그대로여야 한다"
+pos.SESSIONS.clear()
+
 # ---------------------------------------------------------------- 상품 / 판매
 act_as("manager")
 A = pos.save_product({"name": "커피", "price": 3000, "cost": 1000, "stock": 10})["id"]

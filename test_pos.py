@@ -505,6 +505,34 @@ assert bk.execute("SELECT COUNT(*) FROM closings").fetchone()[0] == \
        pos.db().execute("SELECT COUNT(*) FROM closings").fetchone()[0]
 bk.close()
 assert pos.list_backups()["files"][0]["size"] > 0
+
+# 백업본을 실제로 열어 검증한다 — 깨진 걸 복구하려는 순간에 아는 게 최악이다
+pos._verify_backup(files[0])                       # 방금 만든 백업은 통과해야 한다
+junk = os.path.join(pos.BACKUP_DIR, "junk.db")
+with open(junk, "wb") as f:
+    f.write(b"this is not a database")
+fails(lambda: pos._verify_backup(junk), "무결성")
+# 열리긴 하지만 내용이 비어 있는 DB — 판매 건수가 안 맞으면 걸러야 한다
+empty = os.path.join(pos.BACKUP_DIR, "empty.db")
+_e = _sq.connect(empty)
+_e.executescript("CREATE TABLE sales(id INTEGER PRIMARY KEY, total INTEGER)")
+_e.commit(); _e.close()
+fails(lambda: pos._verify_backup(empty), "건수")
+os.remove(junk); os.remove(empty)
+
+# 검증에 실패한 백업은 지운다. 쓸모없는 파일이 멀쩡한 백업을 밀어내면 안 된다.
+good = os.path.join(pos.BACKUP_DIR, "pos-20200101.db")
+import shutil as _sh
+
+_sh.copyfile(files[0], good)
+_real_verify = pos._verify_backup
+pos._verify_backup = lambda path: (_ for _ in ()).throw(Bad("일부러 실패"))
+fails(lambda: pos.backup_api({}), "일부러 실패")
+pos._verify_backup = _real_verify
+assert not os.path.exists(files[0]), "실패한 백업이 남아 있다"
+assert os.path.exists(good), "멀쩡한 이전 백업까지 지워졌다"
+os.remove(good)
+assert pos.backup_api({})["file"], "다시 백업하면 정상 동작해야 한다"
 act_as("manager")
 fails(lambda: pos.backup_api({}), "점주 이상")
 act_as("owner")

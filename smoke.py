@@ -236,10 +236,19 @@ try:
     _, lst, _ = call("/api/backups", None, OWNER)
     check("백업 파일 존재", any(f["file"] == bk["file"] for f in lst["files"]), True)
     check("백업 파일 크기", lst["files"][0]["size"] > 0, True)
-    bk_db = sqlite3.connect(os.path.join(lst["dir"], lst["files"][0]["file"]))
+    bk_path = os.path.join(lst["dir"], lst["files"][0]["file"])
+    bk_db = sqlite3.connect(bk_path)
     check("백업본에 마감 포함",
           bk_db.execute("SELECT COUNT(*) FROM closings").fetchone()[0], 1)
+    check("백업본 무결성", bk_db.execute("PRAGMA quick_check").fetchone()[0], "ok")
     bk_db.close()
+    check("서버가 검증했다고 응답", bk.get("verified"), True, bk)
+
+    # 백업이 실패해도 영업(마감·판매)은 계속돼야 한다
+    os.chmod(BK, 0o500) if os.name != "nt" else None
+    st, after, _ = call("/api/sales", {"items": [{"product_id": P2, "qty": 1}],
+                                       "pay_method": "cash"}, STAFF)
+    check("백업 상태와 무관하게 판매 가능", st, 200, after)
 
     print("[감사로그]")
     _, log, _ = call("/api/audit", None, OWNER)

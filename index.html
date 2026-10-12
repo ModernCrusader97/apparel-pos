@@ -966,6 +966,7 @@ function clCalc() {
 async function loadBackups() {
   const b = await api('/api/backups');
   $('#bkState').innerHTML = `하루 1회 자동 백업 · ${b.keep_days}일 보관<br>
+    백업 직후 파일을 열어 무결성과 판매 건수를 확인합니다. 실패한 백업은 남기지 않습니다.<br>
     <code style="font-size:11px">${esc(b.dir)}</code>`;
   $('#bkList').innerHTML = b.files.slice(0, 10).map(f => `<tr>
     <td><code>${esc(f.file)}</code></td><td class="muted">${esc(f.at.replace('T',' '))}</td>
@@ -973,7 +974,7 @@ async function loadBackups() {
     || '<tr><td class="muted">백업 파일이 아직 없습니다</td></tr>';
 }
 const doBackup = async () => { const r = await api('/api/backups', {});
-  toast('백업 완료: ' + r.file); loadBackups(); };
+  toast(`백업 완료 (검증 통과): ${r.file}`); loadBackups(); };
 
 const loadRepAll = async () => { await loadRep(); await loadClosing(); };
 

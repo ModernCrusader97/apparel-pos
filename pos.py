@@ -432,6 +432,26 @@ def cash_receipts(q):
 
 
 # ---------------------------------------------------------------------- 백업
+def _verify_backup(path):
+    """백업본을 실제로 열어본다. 깨진 걸 복구하려는 순간에 아는 것이 최악이다."""
+    want = db().execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+    try:
+        c = sqlite3.connect(path)
+    except sqlite3.Error as e:
+        raise Bad(f"백업본을 열 수 없습니다: {e}")
+    try:
+        ok = c.execute("PRAGMA quick_check").fetchone()[0]
+        if ok != "ok":
+            raise Bad(f"백업본 무결성 검사 실패: {ok}")
+        got = c.execute("SELECT COUNT(*) FROM sales").fetchone()[0]
+        if got != want:
+            raise Bad(f"백업본 판매 건수 불일치: {got}건 (원본 {want}건)")
+    except sqlite3.DatabaseError as e:
+        raise Bad(f"백업본 무결성 검사 실패: {e}")
+    finally:
+        c.close()
+
+
 def backup_now():
     """SQLite 온라인 백업. 영업 중에도 일관된 스냅샷이 나온다
     (WAL 상태에서 .db 파일만 복사하면 깨질 수 있으므로 파일 복사를 쓰지 않는다)."""
@@ -443,10 +463,21 @@ def backup_now():
         db().backup(out)
     finally:
         out.close()
+    try:
+        _verify_backup(dst)
+    except Bad:
+        # 검증에 실패한 파일은 지운다. 쓸모없는 백업이 보관 한도를 먹고
+        # 멀쩡한 이전 백업을 밀어내면, 정작 복구할 때 쓸 게 없다.
+        try:
+            os.remove(dst)
+        except OSError:
+            pass
+        raise
+    # 오래된 것 정리는 검증을 통과한 뒤에만 한다
     old = sorted(glob.glob(os.path.join(BACKUP_DIR, "pos-????????.db")))[:-BACKUP_KEEP]
     for f in old:
         os.remove(f)
-    return {"file": name, "at": now(), "removed": len(old)}
+    return {"file": name, "at": now(), "removed": len(old), "verified": True}
 
 
 def list_backups(q=None, b=None):
@@ -461,9 +492,14 @@ def list_backups(q=None, b=None):
 
 def backup_api(b):
     need("owner")
-    r = backup_now()
+    try:
+        r = backup_now()
+    except Bad as e:
+        with tx() as c:
+            audit(c, "백업실패", str(e))
+        raise
     with tx() as c:
-        audit(c, "수동백업", r["file"])
+        audit(c, "수동백업", f"{r['file']} (검증 통과)")
     return r
 
 
@@ -475,6 +511,12 @@ def backup_loop():
                 print("자동 백업:", backup_now()["file"])
         except Exception as e:                      # 백업 실패가 영업을 멈추면 안 된다
             print("자동 백업 실패:", e)
+            try:
+                with tx() as c:
+                    audit(c, "백업실패", f"자동 백업: {e}",
+                          who={"uid": None, "name": "(자동)"})
+            except Exception:
+                pass
         time.sleep(1800)
 
 

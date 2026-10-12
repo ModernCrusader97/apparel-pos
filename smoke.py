@@ -130,6 +130,14 @@ try:
                                            "cash_receipt": {"kind": "소득공제",
                                                             "ident_no": "123"}}, STAFF)[0], 400)
 
+    print("[장바구니 복원용 id 조회]")
+    _, two, _ = call(f"/api/products?ids={P1},{P3}", None, STAFF)
+    check("요청한 id만 반환", sorted(p["id"] for p in two), sorted([P1, P3]), two)
+    check("현재 가격을 서버가 준다", all("price" in p and "stock" in p for p in two), True)
+    check("없는 id 는 빠진다", len(call(f"/api/products?ids={P1},999999", None, STAFF)[1]), 1)
+    check("숫자 아닌 값 무시", call("/api/products?ids=abc", None, STAFF)[1], [])
+    check("빈 ids 무시", call("/api/products?ids=", None, STAFF)[0], 200)
+
     print("[영수증 재출력 — 직원도 가능해야 함]")
     st, again, _ = call(f"/api/sale?id={sale['id']}", None, STAFF)
     check("직원이 영수증 재조회", st, 200, again)

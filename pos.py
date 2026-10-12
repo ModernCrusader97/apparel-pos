@@ -540,6 +540,13 @@ def list_products(q):
         sql += (" AND (name LIKE ? OR barcode LIKE ? OR category LIKE ?"
                 " OR style_code LIKE ? OR color LIKE ?)")
         args += [f"%{kw}%"] * 5
+    if q.get("ids"):
+        # 복원된 장바구니가 현재 가격·재고를 정확히 다시 받아오기 위한 경로
+        ids = [int(x) for x in q["ids"][0].split(",") if x.strip().isdigit()][:100]
+        if not ids:
+            return []
+        sql += " AND id IN (%s)" % ",".join("?" * len(ids))
+        args += ids
     if q.get("low"):
         sql += " AND stock <= min_stock"
     # name 은 맨 뒤 — 의류는 이름에 색상/사이즈가 붙어 있어 앞에 두면 사이즈 정렬을 덮어쓴다

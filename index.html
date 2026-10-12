@@ -389,6 +389,7 @@ async function start() {
     ? '연동됨 — 카드 결제 시 단말로 자동 승인/취소됩니다.'
     : '미연동 — 카드 승인번호를 수기로 입력합니다.<br>연동하려면 서버 실행 시 <code>POS_VAN_URL</code> 에 결제모듈 주소를 지정하세요.';
   setLastSale(lastSale());
+  run(restoreCart);
   setRange(0); $('#txMonth').value = new Date().toISOString().slice(0,7);
   $('#clDate').value = new Date().toISOString().slice(0,10);
   run(loadPos); focusScan();
@@ -476,7 +477,51 @@ function calc() {
   const total = sub - disc - pt;
   $('#tSub').textContent = won(sub); $('#tTot').textContent = won(total) + '원';
   $('#tEarn').textContent = (customer ? Math.floor(total * SET.point_rate / 100) : 0) + ' P';
+  saveCart();
   return total;
+}
+
+/* 결제 도중 태블릿이 잠기거나 새로고침돼도 찍어둔 옷이 날아가지 않게 기기에 남긴다.
+   가격·재고는 저장하지 않는다 — 복원할 때 서버에서 현재 값을 다시 받는다. */
+function saveCart() {
+  try {
+    if (!cart.length) return localStorage.removeItem('cart');
+    localStorage.setItem('cart', JSON.stringify({
+      items: cart.map(l => ({id:l.id, qty:l.qty})),
+      cid: customer?.id ?? null,
+      disc: +$('#tDisc').value || 0,
+      pt: +$('#tPoint').value || 0,
+      pay: $('#pay').value}));
+  } catch {}
+}
+
+async function restoreCart() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem('cart') || 'null'); } catch {}
+  if (!saved || !saved.items || !saved.items.length) return;
+
+  const fresh = await api('/api/products?ids=' + saved.items.map(i => i.id).join(','));
+  const byId = new Map(fresh.map(p => [p.id, p]));
+  const warn = [];
+  cart = [];
+  for (const it of saved.items) {
+    const p = byId.get(it.id);
+    if (!p) { warn.push(`상품 #${it.id} 없어짐`); continue; }      // 그 사이 삭제된 상품
+    const qty = Math.min(it.qty, p.stock);
+    if (qty < 1) { warn.push(`${p.name} 품절`); continue; }
+    if (qty < it.qty) warn.push(`${p.name} ${it.qty}→${qty}장 (재고)`);
+    cart.push({id:p.id, name:p.name, price:p.price, qty, stock:p.stock});
+  }
+  if (saved.cid) {
+    try { pickCustomer((await api('/api/customer?id=' + saved.cid)).customer); } catch {}
+  }
+  $('#tDisc').value = saved.disc || 0;
+  $('#tPoint').value = saved.pt || 0;
+  if (saved.pay) $('#pay').value = saved.pay;
+  calc();
+  // 전부 사라진 경우에도 반드시 알린다. 조용히 비면 계산원은 저장이 안 된 줄 안다.
+  if (warn.length) toast(`장바구니 복원 — 확인 필요: ${warn.join(', ')}`, true);
+  else if (cart.length) toast(`장바구니 ${cart.length}건 복원됨`);
 }
 
 async function findCustomer() {

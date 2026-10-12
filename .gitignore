@@ -9,3 +9,5 @@ ui.db*
 smoke.db*
 uibackup/
 smoke-backup/
+# 루프 스케줄러가 만드는 잠금 파일
+.claude/

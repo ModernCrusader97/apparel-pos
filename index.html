@@ -1,0 +1,972 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>매장 POS</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--line:#dcdfe4;--txt:#1c1f23;--sub:#6b7280;--pri:#2563eb;--ok:#059669;--warn:#dc2626;
+        /* 조작 크기 토큰 — 마우스 기본값 */
+        --ctl-py:7px;--ctl-px:10px;--ctl-fs:14px;--tap:0px;--cell-py:7px;--nav-py:8px;--gap:8px}
+  /* 손가락으로 쓰는 기기면 자동으로 키운다. 화면 크기가 아니라 입력 장치 기준이라
+     터치 데스크톱·태블릿은 커지고, 마우스 쓰는 큰 태블릿은 그대로다. */
+  @media (pointer:coarse){
+    :root{--ctl-py:12px;--ctl-px:14px;--ctl-fs:15px;--tap:44px;--cell-py:12px;--nav-py:13px;--gap:10px}
+  }
+  body.ui-touch{--ctl-py:12px;--ctl-px:14px;--ctl-fs:15px;--tap:44px;--cell-py:12px;--nav-py:13px;--gap:10px}
+  body.ui-mouse{--ctl-py:7px;--ctl-px:10px;--ctl-fs:14px;--tap:0px;--cell-py:7px;--nav-py:8px;--gap:8px}
+  *{box-sizing:border-box}
+  [hidden]{display:none!important}   /* .grid 의 display:grid 가 [hidden] 을 이기므로 필요 */
+  body{margin:0;font:14px/1.5 -apple-system,"Malgun Gothic",sans-serif;background:var(--bg);color:var(--txt)}
+  header{display:flex;align-items:center;gap:4px;background:#111827;color:#fff;padding:8px 12px}
+  header b{margin-right:12px;font-size:16px}
+  header .who{margin-left:auto;color:#9ca3af;font-size:13px}
+  nav button{background:none;border:0;color:#9ca3af;padding:var(--nav-py) 13px;font-size:var(--ctl-fs);cursor:pointer;border-radius:6px;min-height:var(--tap)}
+  nav button.on{background:#374151;color:#fff;font-weight:600}
+  main{padding:12px;max-width:1200px;margin:0 auto}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:12px}
+  .row{display:flex;gap:var(--gap);flex-wrap:wrap;align-items:center}
+  .grid{display:grid;grid-template-columns:1fr 380px;gap:12px;align-items:start}
+  .g2{display:grid;grid-template-columns:1fr 1fr;gap:12px;align-items:start}
+  @media(max-width:860px){.grid,.g2{grid-template-columns:1fr}}
+  input,select,button,textarea{font:inherit;font-size:var(--ctl-fs);padding:var(--ctl-py) var(--ctl-px);
+    border:1px solid var(--line);border-radius:6px;background:#fff;min-height:var(--tap)}
+  button{min-width:var(--tap);touch-action:manipulation}
+  input[type=checkbox]{min-height:0;min-width:0;width:calc(16px + var(--tap)/4);height:calc(16px + var(--tap)/4)}
+  input:focus,select:focus{outline:2px solid var(--pri);outline-offset:-1px}
+  button{cursor:pointer;background:#f3f4f6}
+  @media (hover:hover){button:hover{background:#e5e7eb}}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .pri{background:var(--pri);color:#fff;border-color:var(--pri);font-weight:600}
+  @media (hover:hover){.pri:hover{background:#1d4ed8}}
+  .danger{color:var(--warn)}
+  table{width:100%;border-collapse:collapse}
+  th,td{padding:var(--cell-py) 6px;border-bottom:1px solid var(--line);text-align:left}
+  th{font-size:12px;color:var(--sub);font-weight:600}
+  .num{text-align:right;font-variant-numeric:tabular-nums}
+  .muted{color:var(--sub);font-size:12px}
+  .pill{font-size:calc(11px + var(--tap)/22);padding:2px 7px;border-radius:99px;background:#e5e7eb;white-space:nowrap}
+  .pill.low{background:#fee2e2;color:var(--warn);font-weight:600}
+  .pill.ok{background:#d1fae5;color:var(--ok);font-weight:600}
+  .pill.wait{background:#fef3c7;color:#92400e;font-weight:600}
+  .big{font-size:26px;font-weight:700}
+  h3.sec{margin:0 0 8px;font-size:14px}
+  .tot{display:flex;justify-content:space-between;padding:3px 0}
+  .tot.sum{border-top:2px solid var(--txt);margin-top:6px;padding-top:8px;font-size:20px;font-weight:700}
+  #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#111827;color:#fff;padding:10px 18px;border-radius:8px;opacity:0;transition:.2s;pointer-events:none;z-index:9;max-width:80vw}
+  #toast.on{opacity:1}
+  #toast.err{background:var(--warn)}
+  dialog{border:0;border-radius:10px;padding:18px;min-width:330px;max-width:94vw;box-shadow:0 10px 40px #0004}
+  dialog::backdrop{background:#0006}
+  .f{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
+  .f label{font-size:12px;color:var(--sub)}
+  .f input,.f select{width:100%}
+  /* 손가락이 제일 자주 닿는 곳들 — 토큰보다 한 단계 더 크게 */
+  .qty{min-width:calc(34px + var(--tap)/4);font-size:calc(14px + var(--tap)/11);font-weight:600}
+  .cell{min-width:calc(46px + var(--tap)/4)}
+  #plist button,#cart button{min-height:var(--tap)}
+  @media print{
+    /* body.ui-touch 보다 명시도가 낮으면 큰버튼 모드에서 무시된다 — 같이 적어 준다 */
+    :root,body.ui-touch,body.ui-mouse{--ctl-py:4px;--ctl-px:6px;--ctl-fs:12px;--tap:0px;--cell-py:4px}
+    header,nav,.noprint{display:none!important}
+    body{background:#fff}.card{border:0}
+    /* 영수증 인쇄 때는 뒤에 깔린 판매화면이 같이 찍히지 않게 숨긴다 */
+    body.print-receipt #app{display:none!important}
+    body.print-receipt dialog{position:static;box-shadow:none;padding:0;max-width:none}
+    body.print-receipt dialog::backdrop{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div id="login" class="card" style="max-width:320px;margin:14vh auto">
+  <h2 style="margin:0 0 4px">매장 POS</h2>
+  <div class="muted" style="margin-bottom:12px">직원 계정으로 로그인하세요</div>
+  <div class="f"><label>아이디</label><input id="lid" autofocus autocomplete="username"></div>
+  <div class="f"><label>비밀번호</label><input id="lpw" type="password" autocomplete="current-password"></div>
+  <button class="pri" style="width:100%" onclick="doLogin()">로그인</button>
+</div>
+
+<div id="app" hidden>
+<header>
+  <b id="storeName">매장 POS</b>
+  <nav>
+    <button data-t="pos" data-r="staff" class="on">판매</button>
+    <button data-t="inv" data-r="staff">재고</button>
+    <button data-t="cus" data-r="staff">고객</button>
+    <button data-t="rep" data-r="manager">정산</button>
+    <button data-t="doc" data-r="manager">증빙</button>
+    <button data-t="emp" data-r="owner">직원</button>
+    <button data-t="set" data-r="staff">설정</button>
+  </nav>
+  <span class="who"><span id="whoName"></span> <button style="padding:3px 8px" onclick="logout()">로그아웃</button></span>
+</header>
+<main>
+
+<!-- ================= 판매 ================= -->
+<section id="pos" class="grid">
+  <div class="card">
+    <input id="scan" placeholder="바코드 스캔 또는 상품명 검색" style="width:100%;font-size:16px" autofocus>
+    <table style="margin-top:10px"><tbody id="plist"></tbody></table>
+  </div>
+  <div>
+    <div class="card">
+      <div class="row">
+        <input id="cphone" placeholder="고객 전화번호" style="flex:1">
+        <button onclick="run(findCustomer)">조회</button>
+      </div>
+      <div id="cinfo" class="muted" style="margin-top:6px">비회원</div>
+    </div>
+    <div class="card">
+      <table><tbody id="cart"></tbody></table>
+      <div id="cartEmpty" class="muted" style="padding:16px 0;text-align:center">상품을 선택하세요</div>
+      <div style="margin-top:10px">
+        <div class="tot"><span>소계</span><b id="tSub" class="num">0</b></div>
+        <div class="tot"><span>할인</span><input id="tDisc" class="num" type="number" min="0" value="0" style="width:110px" oninput="calc()"></div>
+        <div class="tot"><span>포인트 사용</span><input id="tPoint" class="num" type="number" min="0" value="0" style="width:110px" oninput="calc()"></div>
+        <div class="tot sum"><span>결제금액</span><span id="tTot" class="num">0</span></div>
+        <div class="tot muted"><span>적립 예정</span><span id="tEarn" class="num">0 P</span></div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <select id="pay" style="flex:1" onchange="calc()">
+          <option value="card">카드</option><option value="cash">현금</option><option value="transfer">계좌이체</option></select>
+        <button onclick="clearCart()">비우기</button>
+      </div>
+      <button class="pri" style="width:100%;margin-top:8px;padding:12px;font-size:16px" onclick="payDlg()">결제</button>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 재고 ================= -->
+<section id="inv" hidden>
+  <div class="card row">
+    <input id="isearch" placeholder="품번 / 상품명 / 색상 / 바코드" style="flex:1" oninput="run(loadInv)">
+    <label class="row"><input type="checkbox" id="ilow" onchange="run(loadInv)"> 재고부족만</label>
+    <select id="iview" onchange="run(loadInv)">
+      <option value="matrix">품번별 보기</option>
+      <option value="list">목록 보기</option>
+      <option value="order" class="mgr">발주 제안</option>
+    </select>
+    <button class="pri mgr" onclick="bulkProduct()">+ 색상/사이즈 일괄등록</button>
+    <button class="mgr" onclick="editProduct()">+ 단품</button>
+  </div>
+  <div class="card" id="invOrder" hidden>
+    <div class="row noprint" style="margin-bottom:10px">
+      <label class="muted">분석 기간 <input id="roDays" type="number" value="30" min="7" max="365" style="width:70px"> 일</label>
+      <label class="muted">입고 소요 <input id="roLead" type="number" value="7" min="0" max="90" style="width:60px"> 일</label>
+      <label class="muted">커버 <input id="roCover" type="number" value="14" min="1" max="180" style="width:60px"> 일치</label>
+      <button class="pri" onclick="run(loadInv)">다시 계산</button>
+      <button onclick="dl('/api/reorder.csv?'+roQuery())">발주서 CSV</button>
+      <label class="row"><input type="checkbox" id="roOnly" checked onchange="run(loadInv)"> 발주 필요한 것만</label>
+    </div>
+    <div id="roBody"></div>
+  </div>
+  <div class="card" id="invMatrix" hidden></div>
+  <div class="card" id="invList">
+    <table>
+      <thead><tr><th>상품</th><th>바코드</th><th class="num">매입</th><th class="num">판매</th><th class="num">재고</th><th class="num">마진</th><th></th></tr></thead>
+      <tbody id="itable"></tbody>
+    </table>
+  </div>
+  <div class="card" id="invMoves">
+    <h3 class="sec">입출고 이력</h3>
+    <table><thead><tr><th>일시</th><th>상품</th><th class="num">수량</th><th>사유</th><th>담당</th><th>비고</th></tr></thead><tbody id="moves"></tbody></table>
+  </div>
+</section>
+
+<!-- ================= 고객 ================= -->
+<section id="cus" hidden>
+  <div class="card row">
+    <input id="csearch" placeholder="이름 / 전화번호 / 상호" style="flex:1" oninput="run(loadCus)">
+    <button class="pri" onclick="editCustomer()">+ 고객 등록</button>
+  </div>
+  <div class="card">
+    <table><thead><tr><th>이름</th><th>전화번호</th><th class="num">포인트</th><th>사업자</th><th>가입일</th><th></th></tr></thead><tbody id="ctable"></tbody></table>
+  </div>
+  <div class="card" id="cdetail" hidden></div>
+</section>
+
+<!-- ================= 정산 ================= -->
+<section id="rep" hidden>
+  <div class="card row noprint">
+    <input id="rf" type="date"><span>~</span><input id="rt" type="date">
+    <button class="pri" onclick="run(loadRep)">조회</button>
+    <button onclick="setRange(0)">오늘</button>
+    <button onclick="setRange(6)">최근 7일</button>
+    <button onclick="setRange(29)">최근 30일</button>
+    <button onclick="dl('/api/report.csv?'+repQuery())">엑셀(CSV)</button>
+    <button onclick="print()">인쇄</button>
+  </div>
+  <div class="card">
+    <h3 class="sec">일일 마감 — 서랍 현금 맞추기</h3>
+    <div class="row noprint" style="margin-bottom:8px">
+      <input id="clDate" type="date"><button onclick="run(loadClosing)">조회</button>
+    </div>
+    <div id="clBody"></div>
+  </div>
+  <div class="card">
+    <h3 class="sec">마감 이력</h3>
+    <table><thead><tr><th>날짜</th><th class="num">매출</th><th class="num">예상 현금</th>
+      <th class="num">실제 현금</th><th class="num">차액</th><th>마감자</th><th>메모</th></tr></thead>
+      <tbody id="clList"></tbody></table>
+  </div>
+  <div id="repBody"></div>
+</section>
+
+<!-- ================= 증빙 (현금영수증 / 세금계산서) ================= -->
+<section id="doc" hidden>
+  <div class="card">
+    <h3 class="sec">현금영수증</h3>
+    <div class="row noprint" style="margin-bottom:8px">
+      <select id="crStatus" onchange="run(loadDoc)">
+        <option value="">전체</option><option value="대기">대기</option>
+        <option value="실패">실패</option><option value="발급">발급</option><option value="취소">취소</option>
+      </select>
+      <span class="muted">VAN 미연동 시 단말에서 발급한 승인번호를 수기로 입력하세요</span>
+    </div>
+    <table><thead><tr><th>일시</th><th>판매</th><th>용도</th><th>식별번호</th><th class="num">금액</th><th>승인번호</th><th>상태</th><th></th></tr></thead><tbody id="crTable"></tbody></table>
+  </div>
+  <div class="card">
+    <h3 class="sec">세금계산서 (사업자 고객 월 집계)</h3>
+    <div class="row noprint" style="margin-bottom:8px">
+      <input id="txMonth" type="month">
+      <button class="pri" onclick="run(loadDoc)">조회</button>
+      <button onclick="dl('/api/tax.csv?month='+$('#txMonth').value)">발행용 CSV</button>
+      <span class="muted">발행은 홈택스/팝빌 등에 이 CSV를 올려 진행합니다</span>
+    </div>
+    <table><thead><tr><th>사업자번호</th><th>상호</th><th>대표</th><th>이메일</th><th class="num">건수</th><th class="num">공급가액</th><th class="num">세액</th><th class="num">합계</th></tr></thead><tbody id="txTable"></tbody></table>
+  </div>
+</section>
+
+<!-- ================= 직원 ================= -->
+<section id="emp" hidden>
+  <div class="card row">
+    <button class="pri" onclick="editUser()">+ 직원 등록</button>
+    <span class="muted">직원=판매·입고 / 매니저=＋상품·정산·판매취소·포인트조정 / 점주=전체</span>
+  </div>
+  <div class="card">
+    <table><thead><tr><th>아이디</th><th>이름</th><th>권한</th><th>상태</th><th>등록일</th><th></th></tr></thead><tbody id="utable"></tbody></table>
+  </div>
+  <div class="card">
+    <h3 class="sec">감사 로그 — 돈·재고가 움직인 민감 작업 기록</h3>
+    <input id="alog" placeholder="검색 (직원/작업/내용)" style="width:100%;margin-bottom:8px" oninput="run(loadEmp)">
+    <table><thead><tr><th>일시</th><th>직원</th><th>작업</th><th>내용</th></tr></thead><tbody id="atable"></tbody></table>
+  </div>
+</section>
+
+<!-- ================= 설정 ================= -->
+<section id="set" hidden>
+  <div class="g2">
+    <div class="card own">
+      <h3 class="sec">매장 정보 (영수증·세금계산서에 표시)</h3>
+      <div class="f"><label>매장명</label><input id="sName"></div>
+      <div class="f"><label>사업자등록번호</label><input id="sBiz" placeholder="000-00-00000"></div>
+      <div class="f"><label>대표자</label><input id="sCeo"></div>
+      <div class="f"><label>주소</label><input id="sAddr"></div>
+      <div class="f"><label>전화번호</label><input id="sTel"></div>
+      <div class="f"><label>업태/종목</label><input id="sItem"></div>
+      <hr>
+      <div class="f"><label>포인트 적립률 (%)</label><input id="sRate" type="number" min="0" max="100"></div>
+      <div class="f"><label>포인트 최소 사용 기준 (P)</label><input id="sMin" type="number" min="0"></div>
+      <div class="f"><label>기본 개시 시재금 (원) — 첫 마감 때의 서랍 시작 금액</label><input id="sOpen" type="number" min="0"></div>
+      <button class="pri" onclick="run(saveSet)">저장</button>
+    </div>
+    <div>
+      <div class="card own">
+        <h3 class="sec">백업</h3>
+        <div id="bkState" class="muted"></div>
+        <div class="row" style="margin-top:8px"><button class="pri" onclick="run(doBackup)">지금 백업</button></div>
+        <table style="margin-top:8px"><tbody id="bkList"></tbody></table>
+      </div>
+      <div class="card">
+        <h3 class="sec">내 비밀번호 변경</h3>
+        <div class="f"><label>현재 비밀번호</label><input id="pwOld" type="password"></div>
+        <div class="f"><label>새 비밀번호 (6자 이상)</label><input id="pwNew" type="password"></div>
+        <button class="pri" onclick="run(changePw)">변경</button>
+      </div>
+      <div class="card">
+        <h3 class="sec">화면 — 이 기기에만 적용됩니다</h3>
+        <div class="f"><label>버튼 크기</label>
+          <select id="uiMode" onchange="setUiMode(this.value)">
+            <option value="auto">자동 — 터치 기기면 크게</option>
+            <option value="touch">항상 크게 (태블릿·터치 모니터)</option>
+            <option value="mouse">항상 작게 (마우스)</option>
+          </select></div>
+        <div class="muted" id="uiModeNow"></div>
+      </div>
+      <div class="card">
+        <h3 class="sec">카드단말(VAN) 연동</h3>
+        <div id="vanState" class="muted"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+</div>
+
+<dialog id="dlg"><div id="dlgBody"></div></dialog>
+<dialog id="rcpt"><div id="rcptBody"></div>
+  <div class="row noprint" style="margin-top:12px;justify-content:flex-end">
+    <button onclick="printReceipt()">영수증 인쇄</button>
+    <button class="pri" onclick="rcptDlg.close();focusScan()">닫기</button>
+  </div>
+</dialog>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+/* 버튼 크기는 기기마다 다르므로 서버가 아니라 이 브라우저에 저장한다.
+   localStorage 는 시크릿창 등에서 막힐 수 있어 실패해도 그냥 자동 모드로 돈다. */
+function setUiMode(m) {
+  try { localStorage.setItem('uiMode', m); } catch {}
+  document.body.classList.toggle('ui-touch', m === 'touch');
+  document.body.classList.toggle('ui-mouse', m === 'mouse');
+  const auto = matchMedia('(pointer:coarse)').matches ? '터치' : '마우스';
+  const el = document.querySelector('#uiModeNow');
+  if (el) el.textContent = `이 기기는 ${auto} 입력으로 감지됩니다` +
+    (m === 'auto' ? '' : ' (수동 설정이 우선)');
+}
+const uiMode = () => { try { return localStorage.getItem('uiMode') || 'auto'; } catch { return 'auto'; } };
+setUiMode(uiMode());
+const won = n => (n||0).toLocaleString('ko-KR');
+const esc = s => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const bizNo = b => String(b||'').replace(/^(\d{3})(\d{2})(\d{5})$/, '$1-$2-$3');
+const PAY = {card:'카드', cash:'현금', transfer:'계좌이체'};
+const ROLE = {staff:'직원', manager:'매니저', owner:'점주'};
+const RANK = {staff:1, manager:2, owner:3};
+let SET = {}, ME = {}, cart = [], customer = null, products = [];
+
+function toast(msg, err) {
+  const t = $('#toast'); t.textContent = msg; t.className = 'on' + (err ? ' err' : '');
+  setTimeout(() => t.className = '', 2600);
+}
+
+async function api(path, body) {
+  let r;
+  try {
+    r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+  } catch {
+    // 서버 PC가 꺼졌거나 매장 네트워크가 끊긴 상황. 'Failed to fetch' 를 그대로 보여주면 안 된다
+    throw new Error('서버에 연결할 수 없습니다. 네트워크와 POS 서버를 확인하세요');
+  }
+  const j = await r.json().catch(() => ({error:'서버 응답 오류'}));
+  if (!r.ok) { if (r.status === 401) location.reload(); throw new Error(j.error || '오류'); }
+  return j;
+}
+const run = fn => Promise.resolve().then(fn).catch(e => toast(e.message, true));
+const dl = url => location.href = url;
+const can = role => RANK[ME.role] >= RANK[role];
+
+async function doLogin() {
+  try { ME = await api('/api/login', {username:$('#lid').value, password:$('#lpw').value}); start(); }
+  catch (e) { toast(e.message, true); }
+}
+const logout = () => run(async () => { await api('/api/logout', {}); location.reload(); });
+
+async function start() {
+  $('#login').hidden = true; $('#app').hidden = false;
+  SET = await api('/api/settings');
+  $('#storeName').textContent = SET.store_name;
+  $('#whoName').textContent = `${ME.name} (${ROLE[ME.role]})`;
+  document.title = SET.store_name + ' POS';
+  // 권한에 따라 탭/버튼 숨김 (서버에서도 다시 막으므로 이건 편의용)
+  document.querySelectorAll('nav button').forEach(b => b.hidden = !can(b.dataset.r));
+  document.querySelectorAll('.mgr').forEach(e => e.hidden = !can('manager'));
+  document.querySelectorAll('.own').forEach(e => e.hidden = !can('owner'));
+  $('#vanState').innerHTML = ME.van
+    ? '연동됨 — 카드 결제 시 단말로 자동 승인/취소됩니다.'
+    : '미연동 — 카드 승인번호를 수기로 입력합니다.<br>연동하려면 서버 실행 시 <code>POS_VAN_URL</code> 에 결제모듈 주소를 지정하세요.';
+  setRange(0); $('#txMonth').value = new Date().toISOString().slice(0,7);
+  $('#clDate').value = new Date().toISOString().slice(0,10);
+  run(loadPos); focusScan();
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+  ['pos','inv','cus','rep','doc','emp','set'].forEach(t => $('#'+t).hidden = t !== b.dataset.t);
+  run(({inv:loadInv, cus:loadCus, rep:loadRepAll, doc:loadDoc, emp:loadEmp, set:loadSet, pos:focusScan})[b.dataset.t]);
+});
+const focusScan = () => setTimeout(() => $('#scan')?.focus(), 50);
+
+/* ---------------- 공통 다이얼로그 ---------------- */
+const dlgEl = $('#dlg'), rcptDlg = $('#rcpt');
+function dlg(title, html, onOk, okLabel = '확인') {
+  $('#dlgBody').innerHTML = `<h3 style="margin:0 0 12px">${title}</h3>${html}
+    <div class="row" style="justify-content:flex-end;margin-top:12px">
+      <button onclick="dlgEl.close()">취소</button><button class="pri" id="dlgOk">${okLabel}</button></div>`;
+  // 연타 방지. 결제 확정을 두 번 누르면 카드가 두 번 승인된다 — 모든 다이얼로그가 여길 지난다.
+  $('#dlgOk').onclick = ev => {
+    const btn = ev.currentTarget;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = '처리 중…';
+    run(async () => { await onOk(); dlgEl.close(); })
+      .finally(() => { btn.disabled = false; btn.textContent = label; });
+  };
+  dlgEl.showModal();
+  $('#dlgBody input')?.focus();
+}
+const F = (lbl, id, v = '', type = 'text', attr = '') =>
+  `<div class="f"><label>${lbl}</label><input id="${id}" type="${type}" value="${esc(v)}" ${attr}></div>`;
+const SEL = (lbl, id, opts, cur = '') => `<div class="f"><label>${lbl}</label><select id="${id}">` +
+  opts.map(([v, t]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`).join('') + '</select></div>';
+
+/* ---------------- 판매 ---------------- */
+async function loadPos() {
+  products = await api('/api/products?q=' + encodeURIComponent($('#scan').value));
+  $('#plist').innerHTML = products.map(p => `<tr>
+    <td><b>${esc(p.name)}</b> <span class="muted">${esc(p.style_code || p.category)}</span></td>
+    <td class="num">${won(p.price)}원</td>
+    <td class="num"><span class="pill ${p.stock<=p.min_stock?'low':''}">재고 ${p.stock}</span></td>
+    <td class="num"><button ${p.stock<1?'disabled':''} onclick="add(${p.id})">담기</button></td></tr>`).join('')
+    || '<tr><td class="muted">검색 결과 없음</td></tr>';
+}
+
+let t; $('#scan').oninput = () => { clearTimeout(t); t = setTimeout(() => run(loadPos), 200); };
+$('#scan').onkeydown = e => {
+  if (e.key !== 'Enter') return;
+  const v = $('#scan').value.trim();
+  const hit = products.find(p => p.barcode === v) || (products.length === 1 ? products[0] : null);
+  if (hit) { add(hit.id); $('#scan').value = ''; run(loadPos); }
+};
+
+function add(id) {
+  const p = products.find(x => x.id === id); if (!p) return;
+  const line = cart.find(l => l.id === id);
+  if (line) { if (line.qty >= p.stock) return toast('재고 초과', true); line.qty++; }
+  else cart.push({id, name:p.name, price:p.price, qty:1, stock:p.stock});
+  calc();
+}
+const setQty = (id, d) => { const l = cart.find(x => x.id === id); l.qty += d;
+  if (l.qty < 1 || l.qty > l.stock) l.qty -= d; calc(); };
+const del = id => { cart = cart.filter(x => x.id !== id); calc(); };
+function clearCart() { cart = []; customer = null; $('#cphone').value = ''; $('#cinfo').textContent = '비회원';
+  $('#tDisc').value = 0; $('#tPoint').value = 0; calc(); focusScan(); }
+
+function calc() {
+  $('#cartEmpty').hidden = cart.length > 0;
+  $('#cart').innerHTML = cart.map(l => `<tr>
+    <td>${esc(l.name)}<div class="muted">${won(l.price)}원</div></td>
+    <td class="num" style="white-space:nowrap">
+      <button class="qty" onclick="setQty(${l.id},-1)">−</button>
+      <b style="display:inline-block;min-width:28px;text-align:center">${l.qty}</b>
+      <button class="qty" onclick="setQty(${l.id},1)">+</button></td>
+    <td class="num">${won(l.price*l.qty)}</td>
+    <td><button class="danger" onclick="del(${l.id})">×</button></td></tr>`).join('');
+  const sub = cart.reduce((s, l) => s + l.price*l.qty, 0);
+  let disc = Math.max(0, +$('#tDisc').value || 0); if (disc > sub) disc = sub;
+  let pt = Math.max(0, +$('#tPoint').value || 0);
+  const usable = (customer && customer.points >= SET.point_min_use) ? customer.points : 0;
+  const maxPt = Math.min(usable, sub - disc);
+  if (pt > maxPt) { pt = maxPt; $('#tPoint').value = pt; }
+  const total = sub - disc - pt;
+  $('#tSub').textContent = won(sub); $('#tTot').textContent = won(total) + '원';
+  $('#tEarn').textContent = (customer ? Math.floor(total * SET.point_rate / 100) : 0) + ' P';
+  return total;
+}
+
+async function findCustomer() {
+  const phone = $('#cphone').value.trim(); if (!phone) return;
+  const list = await api('/api/customers?q=' + encodeURIComponent(phone));
+  if (list.length === 1) return pickCustomer(list[0]);
+  if (list.length > 1) return toast('여러 명이 검색됩니다. 전체 번호를 입력하세요', true);
+  if (confirm('등록되지 않은 번호입니다. 신규 고객으로 등록할까요?')) {
+    await api('/api/customers', {phone, name: prompt('고객 이름 (선택)') ?? ''});
+    pickCustomer((await api('/api/customers?q=' + encodeURIComponent(phone)))[0]);
+  }
+}
+$('#cphone').onkeydown = e => e.key === 'Enter' && run(findCustomer);
+
+function pickCustomer(c) {
+  customer = c;
+  const ok = c.points >= SET.point_min_use;
+  $('#cinfo').innerHTML = `<b>${esc(c.name || '이름없음')}</b> · ${esc(c.phone)} · 보유 <b>${won(c.points)}P</b>
+    ${ok ? `<button style="padding:2px 6px" onclick="$('#tPoint').value=${c.points};calc()">전액사용</button>`
+         : `<span class="muted">(${won(SET.point_min_use)}P부터 사용 가능)</span>`}
+    ${c.business_no ? `<div class="muted">사업자 ${esc(c.biz_name||'')} ${esc(bizNo(c.business_no))}</div>` : ''}`;
+  calc();
+}
+
+/* 결제 다이얼로그 — 카드 승인번호(수기모드) / 현금영수증 입력 */
+function payDlg() {
+  if (!cart.length) return toast('장바구니가 비었습니다', true);
+  const total = calc(), pay = $('#pay').value;
+  let html = `<div class="big" style="text-align:center;margin-bottom:12px">${won(total)}원 · ${PAY[pay]}</div>`;
+  if (pay === 'card') {
+    html += ME.van
+      ? '<div class="muted" style="margin-bottom:8px">확인을 누르면 카드단말로 승인 요청합니다.</div>'
+      : F('승인번호 (단말 전표의 번호, 선택)', 'fAppr') + F('카드사', 'fCard');
+    html += F('할부 개월 (0=일시불)', 'fInst', 0, 'number', 'min="0" max="36"');
+  }
+  if (pay === 'cash') {
+    html += `<label class="row" style="margin-bottom:8px"><input type="checkbox" id="fCR" onchange="$('#crBox').hidden=!this.checked"> 현금영수증 발급</label>
+      <div id="crBox" hidden>` +
+      SEL('용도', 'fCRKind', [['소득공제','소득공제 (개인)'], ['지출증빙','지출증빙 (사업자)']]) +
+      F('식별번호 (휴대폰번호 또는 사업자번호)', 'fCRId', customer?.phone || '') + '</div>';
+  }
+  dlg('결제', html, checkout, '결제 확정');
+}
+
+async function checkout() {
+  const pay = $('#pay').value;
+  const body = {
+    items: cart.map(l => ({product_id:l.id, qty:l.qty})),
+    customer_id: customer?.id ?? null,
+    discount: +$('#tDisc').value || 0,
+    point_used: +$('#tPoint').value || 0,
+    pay_method: pay,
+    approval_no: $('#fAppr')?.value || '',
+    card_name: $('#fCard')?.value || '',
+    installment: +($('#fInst')?.value || 0)};
+  if ($('#fCR')?.checked) body.cash_receipt = {kind:$('#fCRKind').value, ident_no:$('#fCRId').value};
+  const r = await api('/api/sales', body);
+  if (r.cash_receipt && r.cash_receipt.status !== '발급')
+    toast('현금영수증 ' + r.cash_receipt.status + ': ' + r.cash_receipt.message, true);
+  showReceipt(r); clearCart(); run(loadPos);
+}
+
+function showReceipt(s) {
+  const st = s.store, cr = (s.receipts || []).filter(r => !r.voided_at)[0];
+  $('#rcptBody').innerHTML = `<div style="font-family:monospace;width:290px">
+    <div style="text-align:center"><b style="font-size:15px">${esc(st.store_name)}</b>
+      ${st.store_biz_no ? `<br><span class="muted">사업자 ${esc(bizNo(st.store_biz_no))}</span>` : ''}
+      ${st.store_ceo ? `<span class="muted"> · ${esc(st.store_ceo)}</span>` : ''}
+      ${st.store_addr ? `<br><span class="muted">${esc(st.store_addr)}</span>` : ''}
+      ${st.store_tel ? `<br><span class="muted">${esc(st.store_tel)}</span>` : ''}
+    </div><hr>
+    <div class="muted">${esc(s.at.replace('T',' '))} · No.${s.id} · ${esc(s.uname||'')}</div><hr>
+    ${s.items.map(i => `<div class="tot"><span>${esc(i.name)} x${i.qty}</span><span>${won(i.price*i.qty)}</span></div>`).join('')}
+    <hr>
+    <div class="tot"><span>소계</span><span>${won(s.subtotal)}</span></div>
+    ${s.discount ? `<div class="tot"><span>할인</span><span>-${won(s.discount)}</span></div>` : ''}
+    ${s.point_used ? `<div class="tot"><span>포인트사용</span><span>-${won(s.point_used)}</span></div>` : ''}
+    <div class="tot sum"><span>결제</span><span>${won(s.total)}원</span></div>
+    <div class="tot muted"><span>공급가액</span><span>${won(Math.round(s.total/1.1))}</span></div>
+    <div class="tot muted"><span>부가세</span><span>${won(s.total - Math.round(s.total/1.1))}</span></div>
+    <hr>
+    <div class="muted">${PAY[s.pay_method]||s.pay_method}${s.installment ? ` ${s.installment}개월` : ''}
+      ${s.card_name ? ' · ' + esc(s.card_name) : ''}
+      ${s.approval_no ? `<br>승인번호 ${esc(s.approval_no)}` : ''}
+      ${cr ? `<br>현금영수증(${esc(cr.kind)}) ${esc(cr.approval_no || cr.status)}` : ''}
+      ${s.customer ? `<br>${esc(s.customer.name||'')} ${esc(s.customer.phone)}<br>적립 ${s.point_earned}P / 잔여 ${won(s.customer.points)}P` : ''}</div>
+    </div>`;
+  rcptDlg.showModal();
+}
+
+/* ---------------- 재고 ---------------- */
+/* 품번별 보기 — 색상(행) × 사이즈(열) 재고 매트릭스. 의류는 이 화면이 본체다. */
+function renderMatrix(list) {
+  const groups = new Map();
+  for (const p of list) {
+    const key = p.style_code || '단품';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(p);
+  }
+  // 일괄등록이 "이름 색상/사이즈"로 만들므로 그 꼬리를 떼면 품번 이름이 나온다
+  const title = p => p.style_code ? p.name.replace(` ${p.color}/${p.size}`, '') : p.name;
+  $('#invMatrix').innerHTML = [...groups].map(([code, items]) => {
+    if (code === '단품')
+      return `<h3 class="sec" style="margin-top:14px">단품</h3><table>${items.map(p =>
+        `<tr><td>${esc(p.name)}</td><td class="num">${won(p.price)}원</td>
+         <td class="num"><span class="pill ${p.stock<=p.min_stock?'low':''}">${p.stock}</span></td>
+         <td class="num"><button onclick='stockDlg(${esc(JSON.stringify(p))})'>입출고</button></td></tr>`).join('')}</table>`;
+    const sizes = [...new Set(items.map(i => i.size))];
+    const colors = [...new Set(items.map(i => i.color))];
+    const at = (c, s) => items.find(i => i.color === c && i.size === s);
+    const sum = items.reduce((a, i) => a + i.stock, 0);
+    return `<h3 class="sec" style="margin-top:14px">${esc(code)} · ${esc(title(items[0]))}
+        <span class="muted">${won(items[0].price)}원 · 총 ${sum}장</span></h3>
+      <table><thead><tr><th>색상</th>${sizes.map(s => `<th class="num">${esc(s)}</th>`).join('')}<th class="num">합계</th></tr></thead>
+      <tbody>${colors.map(c => {
+        const row = sizes.map(s => at(c, s));
+        return `<tr><td><b>${esc(c)}</b></td>${row.map(p => p
+          ? `<td class="num"><button class="cell" style="${p.stock<=p.min_stock?'color:var(--warn);font-weight:700':''}"
+               title="${esc(p.barcode||'')}" onclick='stockDlg(${esc(JSON.stringify(p))})'>${p.stock}</button></td>`
+          : '<td class="num muted">-</td>').join('')}
+          <td class="num">${row.reduce((a, p) => a + (p ? p.stock : 0), 0)}</td></tr>`;
+      }).join('')}</tbody></table>`;
+  }).join('') || '<div class="muted">상품이 없습니다</div>';
+}
+
+/* 발주 제안 — 판매속도로 "몇 장 더 시켜라"를 뽑는다 */
+const roQuery = () => `days=${$('#roDays').value}&lead=${$('#roLead').value}&cover=${$('#roCover').value}`;
+const FLAG = {품절:'low', 보충:'wait', 안팔림:'', 충분:'ok'};
+
+async function loadOrder() {
+  const d = await api('/api/reorder?' + roQuery()), s = d.summary;
+  const only = $('#roOnly').checked;
+  const rows = d.rows.filter(r => !only || r.qty || r.flag === '안팔림');
+  $('#roBody').innerHTML = `
+    <div class="row" style="gap:28px;margin-bottom:10px">
+      <div><div class="muted">발주 필요</div><div class="big">${won(s.skus)} SKU</div></div>
+      <div><div class="muted">총 수량</div><div class="big">${won(s.qty)}장</div></div>
+      <div><div class="muted">예상 매입액</div><div class="big">${won(s.amount)}원</div></div>
+      <div><div class="muted">안 팔리는 재고</div><div class="big">${won(s.dead)} SKU</div>
+        <div class="muted">묶인 돈 ${won(s.dead_amount)}원</div></div>
+    </div>
+    <div class="muted" style="margin-bottom:8px">
+      최근 ${d.params.days}일 판매속도 기준 · 목표재고 = 일평균 × (입고 ${d.params.lead}일 + 커버 ${d.params.cover}일)
+      · 취급 시작이 늦은 신상은 실제 판매일수로 계산합니다</div>
+    <table><thead><tr><th>품번</th><th>상품</th><th class="num">재고</th><th class="num">일평균</th>
+      <th class="num">소진예상</th><th class="num">목표</th><th class="num">발주</th>
+      <th class="num">매입액</th><th>상태</th></tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td class="muted">${esc(r.style_code||'')}</td>
+      <td><b>${esc(r.name)}</b> <span class="muted">${esc(r.barcode||'')}</span></td>
+      <td class="num ${r.stock ? '' : 'danger'}">${r.stock}</td>
+      <td class="num">${r.rate}</td>
+      <td class="num muted">${r.days_left === null ? '-' : r.days_left + '일'}</td>
+      <td class="num muted">${r.target}</td>
+      <td class="num"><b>${r.qty || '-'}</b></td>
+      <td class="num muted">${r.qty ? won(r.amount) : '-'}</td>
+      <td><span class="pill ${FLAG[r.flag]}">${r.flag}</span></td></tr>`).join('')
+    || '<tr><td class="muted">발주할 상품이 없습니다</td></tr>'}</tbody></table>`;
+}
+
+async function loadInv() {
+  const view = $('#iview').value;
+  $('#invOrder').hidden = view !== 'order';
+  $('#invMatrix').hidden = view !== 'matrix';
+  $('#invList').hidden = view !== 'list';
+  $('#invMoves').hidden = view === 'order';
+  if (view === 'order') return loadOrder();
+  const q = '?q=' + encodeURIComponent($('#isearch').value) + ($('#ilow').checked ? '&low=1' : '');
+  const list = await api('/api/products' + q);
+  if (view === 'matrix') renderMatrix(list);
+  const m = can('manager');
+  $('#itable').innerHTML = list.map(p => `<tr>
+    <td><b>${esc(p.name)}</b> <span class="muted">${esc(p.category)}</span></td>
+    <td class="muted">${esc(p.barcode||'')}</td>
+    <td class="num">${won(p.cost)}</td><td class="num">${won(p.price)}</td>
+    <td class="num"><span class="pill ${p.stock<=p.min_stock?'low':''}">${p.stock}</span></td>
+    <td class="num muted">${p.price ? Math.round((p.price-p.cost)/p.price*100) : 0}%</td>
+    <td class="num" style="white-space:nowrap">
+      <button onclick='stockDlg(${esc(JSON.stringify(p))})'>입출고</button>
+      ${m ? `<button onclick='editProduct(${esc(JSON.stringify(p))})'>수정</button>
+             <button class="danger" onclick="rmProduct(${p.id},${esc(JSON.stringify(p.name))})">삭제</button>` : ''}
+    </td></tr>`).join('') || '<tr><td class="muted">상품이 없습니다</td></tr>';
+  $('#moves').innerHTML = (await api('/api/stock/moves')).map(m => `<tr>
+    <td class="muted">${esc(m.at.replace('T',' '))}</td><td>${esc(m.name)}</td>
+    <td class="num ${m.delta<0?'danger':''}">${m.delta>0?'+':''}${m.delta}</td>
+    <td>${esc(m.reason)}</td><td class="muted">${esc(m.uname||'')}</td><td class="muted">${esc(m.note||'')}</td></tr>`).join('');
+}
+
+function editProduct(p) {
+  p = p || {};
+  dlg(p.id ? '상품 수정' : '단품 등록',
+    F('상품명 *','fName',p.name) + F('바코드','fBar',p.barcode||'') + F('분류','fCat',p.category||'') +
+    `<div class="row">${F('품번','fStyle',p.style_code||'')}${F('색상','fColor',p.color||'')}${F('사이즈','fSize',p.size||'')}</div>` +
+    F('매입가','fCost',p.cost||0,'number') + F('판매가 *','fPrice',p.price||0,'number') +
+    F('안전재고','fMin',p.min_stock||0,'number') + (p.id ? '' : F('초기재고','fStock',0,'number')),
+    async () => {
+      await api('/api/products', {id:p.id, name:$('#fName').value, barcode:$('#fBar').value,
+        category:$('#fCat').value, cost:$('#fCost').value, price:$('#fPrice').value,
+        min_stock:$('#fMin').value, stock:$('#fStock')?.value || 0,
+        style_code:$('#fStyle').value, color:$('#fColor').value, size:$('#fSize').value});
+      toast('저장했습니다'); run(loadInv);
+    });
+}
+
+function bulkProduct() {
+  dlg('색상/사이즈 일괄등록',
+    F('품번 * (예: TS-2601)','bStyle') + F('상품명 * (예: 베이직 반팔티)','bName') +
+    F('색상 * — 쉼표로 구분','bColors','블랙,화이트,네이비') +
+    F('사이즈 * — 쉼표로 구분','bSizes','S,M,L,XL') +
+    F('분류','bCat','상의') + F('매입가','bCost',0,'number') + F('판매가 *','bPrice',0,'number') +
+    F('색상·사이즈별 초기재고','bStock',0,'number') + F('안전재고','bMin',2,'number') +
+    '<div class="muted">바코드는 <code>품번-색상-사이즈</code>로 자동 생성됩니다. 이미 있는 조합은 건너뜁니다.</div>',
+    async () => {
+      const r = await api('/api/products/bulk', {style_code:$('#bStyle').value, name:$('#bName').value,
+        colors:$('#bColors').value, sizes:$('#bSizes').value, category:$('#bCat').value,
+        cost:$('#bCost').value, price:$('#bPrice').value, stock:$('#bStock').value,
+        min_stock:$('#bMin').value});
+      toast(`${r.created}개 SKU 생성` + (r.skipped.length ? ` (${r.skipped.length}개는 이미 있어 건너뜀)` : ''));
+      run(loadInv);
+    }, '생성');
+}
+
+const rmProduct = (id, name) => confirm(`[${name}] 을(를) 목록에서 삭제할까요?\n(판매 이력은 그대로 남습니다)`) &&
+  run(async () => { await api('/api/products/delete', {id}); toast('삭제했습니다'); loadInv(); });
+
+function stockDlg(p) {
+  const reasons = [['입고','입고'], ['반품입고','반품입고'], ['이동','이동']]
+    .concat(can('manager') ? [['폐기','폐기 (매니저)'], ['실사조정','실사조정 (매니저)']] : []);
+  dlg(`입출고 — ${esc(p.name)} (현재 ${p.stock}개)`,
+    SEL('사유','fReason',reasons) + F('수량 (출고는 음수)','fDelta',0,'number') + F('비고','fNote'),
+    async () => {
+      await api('/api/stock', {product_id:p.id, delta:$('#fDelta').value,
+        reason:$('#fReason').value, note:$('#fNote').value});
+      toast('처리했습니다'); run(loadInv);
+    });
+}
+
+/* ---------------- 고객 ---------------- */
+async function loadCus() {
+  const list = await api('/api/customers?q=' + encodeURIComponent($('#csearch').value));
+  $('#ctable').innerHTML = list.map(c => `<tr>
+    <td><b>${esc(c.name||'-')}</b></td><td>${esc(c.phone)}</td>
+    <td class="num"><b>${won(c.points)}</b> P</td>
+    <td class="muted">${c.business_no ? esc(c.biz_name||'') + ' ' + esc(bizNo(c.business_no)) : ''}</td>
+    <td class="muted">${esc(c.created_at.slice(0,10))}</td>
+    <td class="num" style="white-space:nowrap">
+      <button onclick="run(()=>cusDetail(${c.id}))">상세</button>
+      ${can('manager') ? `<button onclick='pointDlg(${esc(JSON.stringify(c))})'>포인트조정</button>` : ''}
+      <button onclick='editCustomer(${esc(JSON.stringify(c))})'>수정</button></td></tr>`).join('')
+    || '<tr><td class="muted">고객이 없습니다</td></tr>';
+}
+
+function editCustomer(c) {
+  c = c || {};
+  dlg(c.id ? '고객 수정' : '고객 등록',
+    F('전화번호 *','fPhone',c.phone||'') + F('이름','fName2',c.name||'') + F('메모','fMemo',c.memo||'') +
+    '<hr><div class="muted" style="margin-bottom:6px">사업자 고객이면 아래를 채우면 세금계산서 집계에 잡힙니다</div>' +
+    F('사업자등록번호','fBizNo',c.business_no||'') + F('상호','fBizName',c.biz_name||'') +
+    F('대표자','fBizCeo',c.biz_ceo||'') + F('주소','fBizAddr',c.biz_addr||'') +
+    F('업태/종목','fBizItem',c.biz_item||'') + F('이메일','fBizMail',c.biz_email||''),
+    async () => {
+      await api('/api/customers', {id:c.id, phone:$('#fPhone').value, name:$('#fName2').value,
+        memo:$('#fMemo').value, business_no:$('#fBizNo').value, biz_name:$('#fBizName').value,
+        biz_ceo:$('#fBizCeo').value, biz_addr:$('#fBizAddr').value, biz_item:$('#fBizItem').value,
+        biz_email:$('#fBizMail').value});
+      toast('저장했습니다'); run(loadCus);
+    });
+}
+
+function pointDlg(c) {
+  dlg(`포인트 조정 — ${esc(c.name||c.phone)} (보유 ${won(c.points)}P)`,
+    F('증감 (차감은 음수)','fP',0,'number') + F('사유','fPr','수기조정') +
+    '<div class="muted">조정 내역은 감사 로그에 남습니다</div>',
+    async () => {
+      await api('/api/points', {customer_id:c.id, delta:$('#fP').value, reason:$('#fPr').value});
+      toast('조정했습니다'); run(loadCus);
+    });
+}
+
+async function cusDetail(id) {
+  const d = await api('/api/customer?id=' + id);
+  $('#cdetail').hidden = false;
+  $('#cdetail').innerHTML = `<h3 style="margin:0 0 8px">${esc(d.customer.name||'')} ${esc(d.customer.phone)}
+    <span class="big" style="float:right">${won(d.customer.points)} P</span></h3>
+    <div class="g2"><div><h4>구매 내역</h4><table>${d.sales.map(s => `<tr>
+      <td class="muted">${esc(s.at.replace('T',' '))}</td><td class="num">${won(s.total)}원</td>
+      <td class="muted">${s.voided_at ? '<span class="danger">취소</span>' : ''}</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table></div>
+    <div><h4>포인트 내역</h4><table>${d.points.map(p => `<tr>
+      <td class="muted">${esc(p.at.slice(0,10))}</td><td>${esc(p.reason)}</td>
+      <td class="muted">${esc(p.uname||'')}</td>
+      <td class="num ${p.delta<0?'danger':''}">${p.delta>0?'+':''}${p.delta}</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table></div></div>`;
+  $('#cdetail').scrollIntoView({behavior:'smooth'});
+}
+
+/* ---------------- 정산 ---------------- */
+function setRange(daysAgo) {
+  const d = new Date(), to = d.toISOString().slice(0,10);
+  d.setDate(d.getDate() - daysAgo);
+  $('#rf').value = d.toISOString().slice(0,10); $('#rt').value = to;
+  if (!$('#rep').hidden) run(loadRep);
+}
+const repQuery = () => `from=${$('#rf').value}&to=${$('#rt').value}`;
+
+async function loadRep() {
+  const r = await api('/api/report?' + repQuery()), s = r.summary;
+  $('#repBody').innerHTML = `
+    <div class="card row" style="gap:28px">
+      <div><div class="muted">매출</div><div class="big">${won(s.total)}원</div></div>
+      <div><div class="muted">건수</div><div class="big">${won(s.n)}</div></div>
+      <div><div class="muted">객단가</div><div class="big">${won(s.n ? Math.round(s.total/s.n) : 0)}원</div></div>
+      <div><div class="muted">할인</div><div class="big">${won(s.disc)}원</div></div>
+      <div><div class="muted">포인트 사용/적립</div><div class="big">${won(s.used)} / ${won(s.earned)}</div></div>
+    </div>
+    <div class="g2">
+      <div class="card"><h3 class="sec">일자별</h3><table>
+        ${r.by_day.map(d => `<tr><td>${d.d}</td><td class="num muted">${d.n}건</td><td class="num">${won(d.total)}원</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table>
+        <h3 class="sec" style="margin-top:12px">직원별</h3><table>
+        ${r.by_user.map(u => `<tr><td>${esc(u.uname)}</td><td class="num muted">${u.n}건</td><td class="num">${won(u.total)}원</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table></div>
+      <div class="card"><h3 class="sec">결제수단</h3><table>
+        ${r.by_pay.map(p => `<tr><td>${PAY[p.pay_method]||p.pay_method}</td><td class="num muted">${p.n}건</td><td class="num">${won(p.total)}원</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table>
+        <h3 class="sec" style="margin-top:12px">인기상품</h3><table>
+        ${r.top.map(t => `<tr><td>${esc(t.name)}</td><td class="num muted">${t.qty}개</td><td class="num">${won(t.amt)}원</td></tr>`).join('') || '<tr><td class="muted">없음</td></tr>'}</table></div>
+    </div>
+    <div class="card"><h3 class="sec">거래 내역</h3><table>
+      <thead><tr><th>번호</th><th>일시</th><th>담당</th><th>고객</th><th class="num">결제</th><th>수단/승인</th><th class="noprint"></th></tr></thead><tbody>
+      ${r.sales.map(x => `<tr style="${x.voided_at?'opacity:.5':''}">
+        <td>${x.id}</td><td class="muted">${esc(x.at.replace('T',' '))}</td>
+        <td class="muted">${esc(x.uname||'')}</td>
+        <td>${esc(x.cname||'')} <span class="muted">${esc(x.phone||'')}</span></td>
+        <td class="num" style="${x.voided_at?'text-decoration:line-through':''}">${won(x.total)}원</td>
+        <td class="muted">${PAY[x.pay_method]||x.pay_method}${x.approval_no?'<br>'+esc(x.approval_no):''}</td>
+        <td class="num noprint" style="white-space:nowrap">
+          ${x.voided_at ? `<span class="danger">취소 ${esc(x.vname||'')}</span>`
+                        : `<button onclick="reprint(${x.id})">영수증</button>
+                           <button class="danger" onclick="voidSale(${x.id})">취소</button>`}
+        </td></tr>`).join('') || '<tr><td class="muted">거래 없음</td></tr>'}</tbody></table></div>`;
+}
+
+/* ---------------- 일일 마감 ---------------- */
+async function loadClosing() {
+  const s = await api('/api/closing?date=' + $('#clDate').value);
+  const c = s.closing;
+  const sign = n => (n > 0 ? '+' : '') + won(n);
+  $('#clBody').innerHTML = `
+    <div class="row" style="gap:28px;align-items:flex-start">
+      <div><div class="muted">매출 (${s.sales_count}건)</div><div class="big">${won(s.sales_total)}원</div>
+        <div class="muted">카드 ${won(s.card_total)} · 이체 ${won(s.transfer_total)}</div></div>
+      <div><div class="muted">서랍에 있어야 할 현금</div><div class="big">${won(s.expected_cash)}원</div>
+        <div class="muted">개시 ${won(s.opening_cash)} + 현금매출 ${won(s.cash_in)} − 현금환불 ${won(s.cash_out)}</div></div>
+      ${c ? `<div><div class="muted">실제 센 현금</div><div class="big">${won(c.counted_cash)}원</div>
+        <div class="${c.diff ? 'danger' : 'muted'}" style="font-weight:600">차액 ${sign(c.diff)}원</div></div>` : ''}
+    </div>
+    <div class="row noprint" style="margin-top:10px">
+      ${c ? `<span class="pill ok">마감 완료</span>
+             <span class="muted">${esc(c.at.replace('T',' '))} · ${esc(c.uname||'')} ${esc(c.memo||'')}</span>
+             <button onclick='closeDlg(${esc(JSON.stringify(s))})'>다시 세기</button>`
+          : `<button class="pri" onclick='closeDlg(${esc(JSON.stringify(s))})'>마감하기</button>`}
+    </div>`;
+  $('#clList').innerHTML = (await api('/api/closings')).map(c => `<tr>
+    <td><b>${c.d}</b></td><td class="num">${won(c.sales_total)}원</td>
+    <td class="num">${won(c.expected_cash)}</td><td class="num">${won(c.counted_cash)}</td>
+    <td class="num ${c.diff ? 'danger' : ''}"><b>${sign(c.diff)}</b></td>
+    <td class="muted">${esc(c.uname||'')}</td><td class="muted">${esc(c.memo||'')}</td></tr>`).join('')
+    || '<tr><td class="muted">마감 이력이 없습니다</td></tr>';
+}
+
+function closeDlg(s) {
+  dlg(`${s.date} 마감`,
+    F('개시 시재금 (서랍 시작 금액)','clOpen',s.opening_cash,'number','oninput="clCalc()"') +
+    `<div class="muted" style="margin:-4px 0 8px">＋ 현금매출 ${won(s.cash_in)} − 현금환불 ${won(s.cash_out)}</div>` +
+    F('실제 센 현금 *','clCount',s.closing?.counted_cash ?? '','number','oninput="clCalc()"') +
+    '<div class="tot sum"><span>차액</span><span id="clDiff">-</span></div>' +
+    F('메모 (차액 사유 등)','clMemo',s.closing?.memo||''),
+    async () => {
+      const r = await api('/api/closing', {date:s.date, opening_cash:$('#clOpen').value,
+        counted_cash:$('#clCount').value, memo:$('#clMemo').value});
+      toast(`마감 완료 — 차액 ${r.closing.diff > 0 ? '+' : ''}${won(r.closing.diff)}원`);
+      run(loadClosing);
+    }, '마감 확정');
+  window._cl = s; clCalc();
+}
+function clCalc() {
+  const s = window._cl;
+  const expected = (+$('#clOpen').value || 0) + s.cash_in - s.cash_out;
+  const v = $('#clCount').value;
+  const d = v === '' ? null : (+v || 0) - expected;
+  $('#clDiff').innerHTML = `<span class="muted" style="font-weight:400">예상 ${won(expected)}원 · </span>` +
+    (d === null ? '-' : `<span class="${d ? 'danger' : ''}">${d > 0 ? '+' : ''}${won(d)}원</span>`);
+}
+
+/* ---------------- 백업 ---------------- */
+async function loadBackups() {
+  const b = await api('/api/backups');
+  $('#bkState').innerHTML = `하루 1회 자동 백업 · ${b.keep_days}일 보관<br>
+    <code style="font-size:11px">${esc(b.dir)}</code>`;
+  $('#bkList').innerHTML = b.files.slice(0, 10).map(f => `<tr>
+    <td><code>${esc(f.file)}</code></td><td class="muted">${esc(f.at.replace('T',' '))}</td>
+    <td class="num muted">${Math.round(f.size/1024).toLocaleString()} KB</td></tr>`).join('')
+    || '<tr><td class="muted">백업 파일이 아직 없습니다</td></tr>';
+}
+const doBackup = async () => { const r = await api('/api/backups', {});
+  toast('백업 완료: ' + r.file); loadBackups(); };
+
+const loadRepAll = async () => { await loadRep(); await loadClosing(); };
+
+function printReceipt() {
+  document.body.classList.add('print-receipt');
+  try { print(); } finally { document.body.classList.remove('print-receipt'); }
+}
+
+const reprint = id => run(async () => showReceipt(await api('/api/sale?id=' + id)));
+const voidSale = id => confirm(`판매 ${id}번을 취소할까요?\n재고·포인트가 되돌려지고, 카드 결제면 승인취소까지 진행합니다.\n이 작업은 감사 로그에 기록됩니다.`) &&
+  run(async () => { const r = await api('/api/sales/void', {id});
+    toast('취소했습니다' + (r.van_cancelled ? ' (카드 승인취소 완료)' : '')); loadRepAll(); });
+
+/* ---------------- 증빙 ---------------- */
+async function loadDoc() {
+  const list = await api('/api/receipts?status=' + encodeURIComponent($('#crStatus').value));
+  const badge = {발급:'ok', 대기:'wait', 실패:'low', 취소:''};
+  $('#crTable').innerHTML = list.map(r => `<tr>
+    <td class="muted">${esc(r.at.replace('T',' '))}</td><td>#${r.sale_id}</td><td>${esc(r.kind)}</td>
+    <td class="muted">${esc(r.ident_no)}</td><td class="num">${won(r.amount)}원</td>
+    <td>${esc(r.approval_no||'-')}</td>
+    <td><span class="pill ${badge[r.status]||''}">${esc(r.status)}</span>
+        ${r.message ? `<div class="muted">${esc(r.message)}</div>` : ''}</td>
+    <td class="num">${r.status === '발급' || r.status === '취소' ? '' :
+      `<button onclick="crManual(${r.id})">승인번호 입력</button>`}</td></tr>`).join('')
+    || '<tr><td class="muted">발급 내역이 없습니다</td></tr>';
+
+  const t = await api('/api/tax?month=' + $('#txMonth').value);
+  $('#txTable').innerHTML = t.rows.map(r => `<tr>
+    <td>${esc(bizNo(r.business_no))}</td><td><b>${esc(r.biz_name||r.name)}</b></td><td>${esc(r.biz_ceo||'')}</td>
+    <td class="muted">${esc(r.biz_email||'')}</td><td class="num">${r.n}</td>
+    <td class="num">${won(r.supply)}</td><td class="num">${won(r.vat)}</td>
+    <td class="num"><b>${won(r.total)}</b></td></tr>`).join('')
+    || '<tr><td class="muted">해당 월 사업자 고객 거래가 없습니다</td></tr>';
+}
+
+const crManual = id => dlg('현금영수증 승인번호 입력',
+  F('단말/홈택스에서 발급받은 승인번호','fCrNo') +
+  '<div class="muted">VAN 미연동 상태에서 수기로 발급한 건을 맞춰 넣습니다</div>',
+  async () => { await api('/api/receipts/manual', {id, approval_no:$('#fCrNo').value});
+    toast('입력했습니다'); run(loadDoc); });
+
+/* ---------------- 직원 ---------------- */
+async function loadEmp() {
+  const list = await api('/api/users');
+  $('#utable').innerHTML = list.map(u => `<tr style="${u.active?'':'opacity:.5'}">
+    <td><code>${esc(u.username)}</code></td><td><b>${esc(u.name)}</b></td>
+    <td>${ROLE[u.role]}</td>
+    <td>${u.active ? '<span class="pill ok">사용중</span>' : '<span class="pill">중지</span>'}</td>
+    <td class="muted">${esc(u.created_at.slice(0,10))}</td>
+    <td class="num" style="white-space:nowrap">
+      <button onclick='editUser(${esc(JSON.stringify(u))})'>수정</button>
+      <button onclick="toggleUser(${u.id})">${u.active ? '중지' : '재사용'}</button></td></tr>`).join('');
+  $('#atable').innerHTML = (await api('/api/audit?q=' + encodeURIComponent($('#alog').value))).map(a => `<tr>
+    <td class="muted">${esc(a.at.replace('T',' '))}</td><td>${esc(a.username)}</td>
+    <td><b>${esc(a.action)}</b></td><td class="muted">${esc(a.detail)}</td></tr>`).join('')
+    || '<tr><td class="muted">기록 없음</td></tr>';
+}
+
+function editUser(u) {
+  u = u || {};
+  dlg(u.id ? `직원 수정 — ${esc(u.username)}` : '직원 등록',
+    (u.id ? '' : F('아이디 * (영문소문자/숫자, 3~20자)','uId')) +
+    F('이름 *','uName',u.name||'') +
+    SEL('권한','uRole',[['staff','직원 — 판매·입고·고객등록'],
+                        ['manager','매니저 — ＋상품·정산·판매취소·포인트조정'],
+                        ['owner','점주 — 전체']], u.role||'staff') +
+    F(u.id ? '새 비밀번호 (비우면 유지)' : '비밀번호 * (6자 이상)','uPw','','password'),
+    async () => {
+      await api('/api/users', {id:u.id, username:$('#uId')?.value, name:$('#uName').value,
+        role:$('#uRole').value, password:$('#uPw').value});
+      toast('저장했습니다'); run(loadEmp);
+    });
+}
+const toggleUser = id => run(async () => { await api('/api/users/toggle', {id}); run(loadEmp); });
+
+/* ---------------- 설정 ---------------- */
+async function loadSet() {
+  SET = await api('/api/settings');
+  const map = {sName:'store_name', sBiz:'store_biz_no', sCeo:'store_ceo', sAddr:'store_addr',
+               sTel:'store_tel', sItem:'store_item', sRate:'point_rate', sMin:'point_min_use',
+               sOpen:'opening_cash'};
+  for (const [el, k] of Object.entries(map)) $('#'+el).value = SET[k] ?? '';
+  $('#uiMode').value = uiMode(); setUiMode(uiMode());
+  if (can('owner')) await loadBackups();
+}
+async function saveSet() {
+  SET = await api('/api/settings', {store_name:$('#sName').value, store_biz_no:$('#sBiz').value,
+    store_ceo:$('#sCeo').value, store_addr:$('#sAddr').value, store_tel:$('#sTel').value,
+    store_item:$('#sItem').value, point_rate:$('#sRate').value, point_min_use:$('#sMin').value,
+    opening_cash:$('#sOpen').value});
+  $('#storeName').textContent = SET.store_name; toast('저장했습니다');
+}
+async function changePw() {
+  await api('/api/me/password', {old:$('#pwOld').value, new:$('#pwNew').value});
+  $('#pwOld').value = $('#pwNew').value = ''; toast('비밀번호를 변경했습니다');
+}
+
+$('#lpw').onkeydown = $('#lid').onkeydown = e => e.key === 'Enter' && doLogin();
+</script>
+</body>
+</html>

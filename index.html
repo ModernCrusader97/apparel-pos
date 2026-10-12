@@ -592,7 +592,16 @@ async function checkout() {
 
 function showReceipt(s) {
   const st = s.store, cr = (s.receipts || []).filter(r => !r.voided_at)[0];
+  // 취소 표시는 배경색을 쓰지 않는다. 브라우저는 기본적으로 배경을 인쇄하지 않아
+  // 색으로만 표시하면 종이에선 멀쩡한 영수증으로 나온다. 테두리와 굵은 글자는 찍힌다.
+  const voidMark = s.voided_at ? `<div style="border:3px double #000;padding:6px 4px;
+      margin:6px 0;text-align:center;font-weight:700;font-size:15px;letter-spacing:2px">
+      취 소 된 거 래
+      <div style="font-weight:400;font-size:11px;letter-spacing:0">
+        ${esc(s.voided_at.replace('T',' '))} 취소 · 이 영수증은 증빙이 되지 않습니다</div>
+    </div>` : '';
   $('#rcptBody').innerHTML = `<div style="font-family:monospace;width:290px">
+    ${voidMark}
     <div style="text-align:center"><b style="font-size:15px">${esc(st.store_name)}</b>
       ${st.store_biz_no ? `<br><span class="muted">사업자 ${esc(bizNo(st.store_biz_no))}</span>` : ''}
       ${st.store_ceo ? `<span class="muted"> · ${esc(st.store_ceo)}</span>` : ''}
@@ -605,7 +614,7 @@ function showReceipt(s) {
     <div class="tot"><span>소계</span><span>${won(s.subtotal)}</span></div>
     ${s.discount ? `<div class="tot"><span>할인</span><span>-${won(s.discount)}</span></div>` : ''}
     ${s.point_used ? `<div class="tot"><span>포인트사용</span><span>-${won(s.point_used)}</span></div>` : ''}
-    <div class="tot sum"><span>결제</span><span>${won(s.total)}원</span></div>
+    <div class="tot sum"><span>결제</span><span${s.voided_at ? ' style="text-decoration:line-through"' : ''}>${won(s.total)}원</span></div>
     <div class="tot muted"><span>공급가액</span><span>${won(Math.round(s.total/1.1))}</span></div>
     <div class="tot muted"><span>부가세</span><span>${won(s.total - Math.round(s.total/1.1))}</span></div>
     <hr>

@@ -343,6 +343,14 @@ setUiMode(uiMode());
 const won = n => (n||0).toLocaleString('ko-KR');
 const esc = s => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const bizNo = b => String(b||'').replace(/^(\d{3})(\d{2})(\d{5})$/, '$1-$2-$3');
+
+/* 날짜 기본값은 **반드시** 이 두 함수만 쓴다.
+   toISOString() 은 UTC 라서 한국(UTC+9)에서는 자정~오전 9시 동안 하루 전을 준다.
+   서버는 datetime.now()(현지)로 기록하므로, 그걸 쓰면 아침마다 정산이 어제로 잡히고
+   마감이 어제 날짜로 저장된다. */
+const ymd = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  + `-${String(d.getDate()).padStart(2, '0')}`;
+const ym = (d = new Date()) => ymd(d).slice(0, 7);
 const PAY = {card:'카드', cash:'현금', transfer:'계좌이체'};
 const ROLE = {staff:'직원', manager:'매니저', owner:'점주'};
 const RANK = {staff:1, manager:2, owner:3};
@@ -396,8 +404,8 @@ async function start() {
     : '미연동 — 카드 승인번호를 수기로 입력합니다.<br>연동하려면 서버 실행 시 <code>POS_VAN_URL</code> 에 결제모듈 주소를 지정하세요.';
   setLastSale(lastSale());
   run(restoreCart);
-  setRange(0); $('#txMonth').value = new Date().toISOString().slice(0,7);
-  $('#clDate').value = new Date().toISOString().slice(0,10);
+  setRange(0); $('#txMonth').value = ym();
+  $('#clDate').value = ymd();
   run(loadPos); focusScan();
 }
 
@@ -833,9 +841,9 @@ async function cusDetail(id) {
 
 /* ---------------- 정산 ---------------- */
 function setRange(daysAgo) {
-  const d = new Date(), to = d.toISOString().slice(0,10);
+  const d = new Date(), to = ymd(d);
   d.setDate(d.getDate() - daysAgo);
-  $('#rf').value = d.toISOString().slice(0,10); $('#rt').value = to;
+  $('#rf').value = ymd(d); $('#rt').value = to;
   if (!$('#rep').hidden) run(loadRep);
 }
 const repQuery = () => `from=${$('#rf').value}&to=${$('#rt').value}`;

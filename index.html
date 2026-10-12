@@ -362,7 +362,13 @@ async function api(path, body) {
     throw new Error('서버에 연결할 수 없습니다. 네트워크와 POS 서버를 확인하세요');
   }
   const j = await r.json().catch(() => ({error:'서버 응답 오류'}));
-  if (!r.ok) { if (r.status === 401) location.reload(); throw new Error(j.error || '오류'); }
+  if (!r.ok) {
+    // 401 = 세션 만료 → 로그인 화면으로 되돌린다.
+    // 단 로그인 요청 자체의 401 은 '비밀번호 틀림'이다. 여기서 새로고침하면
+    // 계산원이 사유를 못 보고 화면만 깜빡인다.
+    if (r.status === 401 && path !== '/api/login') location.reload();
+    throw new Error(j.error || '오류');
+  }
   return j;
 }
 const run = fn => Promise.resolve().then(fn).catch(e => toast(e.message, true));

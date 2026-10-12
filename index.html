@@ -131,6 +131,7 @@
         <select id="pay" style="flex:1" onchange="calc()">
           <option value="card">카드</option><option value="cash">현금</option><option value="transfer">계좌이체</option></select>
         <button onclick="clearCart()">비우기</button>
+        <button id="lastRcpt" onclick="reprint(lastSale())" disabled>직전 영수증</button>
       </div>
       <button class="pri" style="width:100%;margin-top:8px;padding:12px;font-size:16px" onclick="payDlg()">결제</button>
     </div>
@@ -317,6 +318,15 @@
 <script>
 const $ = s => document.querySelector(s);
 
+/* 직전 판매번호. 프린터가 밀리거나 손님이 나중에 영수증을 달라 할 때
+   직원이 매니저(정산 탭) 없이 다시 뽑을 수 있어야 한다. */
+const lastSale = () => { try { return localStorage.getItem('lastSale'); } catch { return null; } };
+function setLastSale(id) {
+  try { id ? localStorage.setItem('lastSale', id) : localStorage.removeItem('lastSale'); } catch {}
+  const b = document.querySelector('#lastRcpt');
+  if (b) b.disabled = !id;
+}
+
 /* 버튼 크기는 기기마다 다르므로 서버가 아니라 이 브라우저에 저장한다.
    localStorage 는 시크릿창 등에서 막힐 수 있어 실패해도 그냥 자동 모드로 돈다. */
 function setUiMode(m) {
@@ -378,6 +388,7 @@ async function start() {
   $('#vanState').innerHTML = ME.van
     ? '연동됨 — 카드 결제 시 단말로 자동 승인/취소됩니다.'
     : '미연동 — 카드 승인번호를 수기로 입력합니다.<br>연동하려면 서버 실행 시 <code>POS_VAN_URL</code> 에 결제모듈 주소를 지정하세요.';
+  setLastSale(lastSale());
   setRange(0); $('#txMonth').value = new Date().toISOString().slice(0,7);
   $('#clDate').value = new Date().toISOString().slice(0,10);
   run(loadPos); focusScan();
@@ -525,7 +536,7 @@ async function checkout() {
   const r = await api('/api/sales', body);
   if (r.cash_receipt && r.cash_receipt.status !== '발급')
     toast('현금영수증 ' + r.cash_receipt.status + ': ' + r.cash_receipt.message, true);
-  showReceipt(r); clearCart(); run(loadPos);
+  setLastSale(r.id); showReceipt(r); clearCart(); run(loadPos);
 }
 
 function showReceipt(s) {

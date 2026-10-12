@@ -130,6 +130,13 @@ try:
                                            "cash_receipt": {"kind": "소득공제",
                                                             "ident_no": "123"}}, STAFF)[0], 400)
 
+    print("[영수증 재출력 — 직원도 가능해야 함]")
+    st, again, _ = call(f"/api/sale?id={sale['id']}", None, STAFF)
+    check("직원이 영수증 재조회", st, 200, again)
+    check("같은 판매 내용", (again["id"], again["total"]), (sale["id"], sale["total"]))
+    check("영수증에 담당자", again["uname"], "알바")
+    check("없는 판매번호", call("/api/sale?id=999999", None, STAFF)[0], 404)
+
     print("[판매취소 권한 + 카드 승인취소]")
     check("직원 취소 차단", call("/api/sales/void", {"id": sale["id"]}, STAFF)[0], 403)
     st, r, _ = call("/api/sales/void", {"id": sale["id"]}, MGR)

@@ -1253,7 +1253,6 @@ def save_settings(b):
 # ---------------------------------------------------------------------- 라우팅
 # (메서드, 경로) -> (핸들러, 필요권한)
 ROUTES = {
-    ("GET", "/api/me"): (lambda q, b: {**me(), "exp": None, "van": bool(VAN_URL)}, "staff"),
     ("POST", "/api/me/password"): (lambda q, b: change_my_pw(b), "staff"),
     ("GET", "/api/users"): (lambda q, b: list_users(q), "owner"),
     ("POST", "/api/users"): (lambda q, b: save_user(b), "owner"),

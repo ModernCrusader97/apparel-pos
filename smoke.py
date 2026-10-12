@@ -74,7 +74,7 @@ srv = subprocess.Popen(
 for _ in range(50):
     time.sleep(0.2)
     try:
-        if call("/api/me")[0] == 401:
+        if call("/api/products")[0] == 401:   # 인증을 요구하면 서버가 뜬 것
             break
     except Exception:
         pass

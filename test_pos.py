@@ -52,6 +52,38 @@ fails(lambda: pos.audit_log({}), "점주 이상")
 act_as("owner")
 fails(lambda: pos.save_settings({"store_biz_no": "220-81-62518"}), "올바르지 않습니다")
 
+# ------------------------------------------------------------- 로그인 시도 제한
+pos.LOGIN_FAILS.clear()
+for i in range(pos.LOGIN_MAX):
+    fails(lambda: pos.login("admin", "틀린비번"), "비밀번호가 올바르지")
+# 한도를 넘기면 비밀번호가 맞아도 막힌다
+fails(lambda: pos.login("admin", "owner123"), "잠겼습니다")
+fails(lambda: pos.login("admin", "틀린비번"), "잠겼습니다")
+# 다른 계정은 영향 없다 (한 명이 틀렸다고 매장 전체가 멈추면 안 된다)
+fails(lambda: pos.login("mgr", "틀린비번"), "비밀번호가 올바르지")
+# 잠금은 감사 로그에 남는다
+act_as("owner")
+assert any(a["action"] == "로그인잠금" and a["username"] == "admin"
+           for a in pos.audit_log({})), "잠금이 감사 로그에 없음"
+# 시간이 지나면 풀리고, 성공하면 카운터가 초기화된다
+pos.LOGIN_FAILS["admin"][1] = pos.datetime.now() - pos.timedelta(seconds=1)
+tok2, who2 = pos.login("admin", "owner123")
+assert who2["role"] == "owner" and "admin" not in pos.LOGIN_FAILS, pos.LOGIN_FAILS
+assert any(a["action"] == "로그인잠금해제" for a in pos.audit_log({})), "해제가 감사 로그에 없음"
+# 풀린 뒤에는 다시 한도만큼 시도할 수 있다
+for i in range(pos.LOGIN_MAX - 1):
+    fails(lambda: pos.login("admin", "틀린비번"), "비밀번호가 올바르지")
+assert pos.login("admin", "owner123")[1]["role"] == "owner"
+# 없는 아이디로 무한 시도해도 메모리가 무한정 늘지 않는다
+pos.LOGIN_FAILS.clear()
+for i in range(pos.LOGIN_PRUNE_AT + 50):
+    try:
+        pos.login(f"nobody{i}", "x")
+    except Bad:
+        pass
+assert len(pos.LOGIN_FAILS) <= pos.LOGIN_PRUNE_AT + 1, len(pos.LOGIN_FAILS)
+pos.LOGIN_FAILS.clear()
+
 # ---------------------------------------------------------------- 상품 / 판매
 act_as("manager")
 A = pos.save_product({"name": "커피", "price": 3000, "cost": 1000, "stock": 10})["id"]

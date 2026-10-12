@@ -89,6 +89,16 @@ try:
     check("점주 로그인", who["role"], "owner")
     check("VAN 연동 인식", who["van"], True)
 
+    print("[로그인 시도 제한]")
+    # 실제 계정을 묶지 않도록 쓰고 버리는 아이디로 확인한다
+    codes = [call("/api/login", {"username": "attacker", "password": "x"})[0]
+             for _ in range(7)]
+    check("처음엔 401", codes[0], 401)
+    check("한도 넘으면 429", codes[-1], 429)
+    check("잠기기 전까지는 401", codes.count(401) >= 5, True, codes)
+    check("정상 계정은 영향 없음",
+          call("/api/login", {"username": "admin", "password": "owner123"})[0], 200)
+
     print("[직원 계정]")
     st, body, _ = call("/api/users", {"username": "staff1", "name": "알바",
                                       "password": "stf123", "role": "staff"}, OWNER)

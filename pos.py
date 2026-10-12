@@ -23,6 +23,13 @@ DB_PATH = os.environ.get("POS_DB", os.path.join(BASE, "pos.db"))
 SESSIONS = {}  # token -> {"uid","name","role","exp"}
 SESSION_HOURS = 12
 
+# 로그인 시도 제한. 아이디별로 센다.
+# ponytail: 메모리 보관 — 서버를 내리면 풀린다. 매장 한 곳에서는 그걸로 충분하다.
+LOGIN_FAILS = {}            # username -> [연속 실패횟수, 잠금 해제시각]
+LOGIN_MAX = 5               # 이 횟수를 넘기면 잠근다
+LOGIN_LOCK_SEC = 300        # 잠금 시간. 짧게 둔다 — 영업 중에 직원을 오래 묶으면 안 된다
+LOGIN_PRUNE_AT = 500        # 없는 아이디를 계속 던져 메모리를 불리지 못하게 하는 상한
+
 # VAN(카드단말) 연동 — 매장 PC에 설치된 결제모듈 주소. 미설정이면 수기 승인번호 모드.
 VAN_URL = os.environ.get("POS_VAN_URL")
 VAN_TIMEOUT = int(os.environ.get("POS_VAN_TIMEOUT", "60"))
@@ -219,17 +226,40 @@ def need(role):
         raise Bad(f"{ROLE_KO[role]} 이상만 할 수 있습니다", 403)
 
 
-def audit(c, action, detail=""):
-    u = me()
+def audit(c, action, detail="", who=None):
+    """who 를 주면 로그인 전(세션 없음) 사건도 남길 수 있다."""
+    u = who or me()
     c.execute("INSERT INTO audit(user_id,username,action,detail,at) VALUES(?,?,?,?,?)",
               (u["uid"], u["name"], action, detail, now()))
 
 
+def _login_log(action, un, detail):
+    with tx() as c:
+        audit(c, action, detail, who={"uid": None, "name": un or "(미입력)"})
+
+
 def login(username, pw):
-    u = db().execute("SELECT * FROM users WHERE username=? AND active=1",
-                     ((username or "").strip(),)).fetchone()
+    un = (username or "").strip()
+    rec = LOGIN_FAILS.get(un)
+    if rec and rec[1] > datetime.now():
+        left = int((rec[1] - datetime.now()).total_seconds()) + 1
+        raise Bad(f"로그인 시도가 많아 잠겼습니다. {left}초 후 다시 시도하세요", 429)
+
+    u = db().execute("SELECT * FROM users WHERE username=? AND active=1", (un,)).fetchone()
     if not u or not verify_pw(pw or "", u["pw"]):
+        if len(LOGIN_FAILS) >= LOGIN_PRUNE_AT:   # 없는 아이디를 퍼부어도 안 불어나게
+            for k in [k for k, v in LOGIN_FAILS.items() if v[1] <= datetime.now()]:
+                LOGIN_FAILS.pop(k, None)
+        rec = LOGIN_FAILS.setdefault(un, [0, datetime.min])
+        rec[0] += 1
+        if rec[0] >= LOGIN_MAX:
+            rec[1] = datetime.now() + timedelta(seconds=LOGIN_LOCK_SEC)
+            rec[0] = 0
+            _login_log("로그인잠금", un, f"{LOGIN_MAX}회 연속 실패 — {LOGIN_LOCK_SEC}초 잠금")
         raise Bad("아이디 또는 비밀번호가 올바르지 않습니다", 401)
+
+    if LOGIN_FAILS.pop(un, None) and rec and rec[1] > datetime.min:
+        _login_log("로그인잠금해제", un, "잠금 시간이 지나 정상 로그인")
     tok = secrets.token_hex(16)
     SESSIONS[tok] = {"uid": u["id"], "name": u["name"], "role": u["role"],
                      "exp": datetime.now() + timedelta(hours=SESSION_HOURS)}

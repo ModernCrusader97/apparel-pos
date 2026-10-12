@@ -431,6 +431,63 @@ act_as("staff")
 fails(lambda: pos.reorder({}), "매니저 이상")
 act_as("manager")
 
+# ----------------------------------------------------------------- 마감 누락 알림
+act_as("manager")
+MISS = pos.save_product({"name": "마감알림테스트", "price": 1000, "cost": 500, "stock": 999})["id"]
+
+
+def sale_on(days_ago):
+    act_as("staff")
+    s = pos.create_sale({"items": [{"product_id": MISS, "qty": 1}], "pay_method": "cash"})
+    act_as("manager")
+    if days_ago:
+        at = (pos.datetime.now() - pos.timedelta(days=days_ago)).strftime("%Y-%m-%dT14:00:00")
+        with pos.tx() as c:
+            c.execute("UPDATE sales SET at=? WHERE id=?", (at, s["id"]))
+    return s
+
+
+day = lambda n: (pos.datetime.now() - pos.timedelta(days=n)).strftime("%Y-%m-%d")
+miss = lambda: [m["d"] for m in pos.unclosed_days()]
+
+sale_on(1)                                   # 어제 판매, 마감 없음
+assert day(1) in miss(), miss()
+# 오늘은 영업 중이니 빼야 한다
+assert day(0) not in miss(), miss()
+# 7일 범위 밖은 안 나온다
+sale_on(9)
+assert day(9) not in miss(), miss()
+# 불변식: 나오는 날은 전부 '미취소 판매가 있고' '마감 행이 없는' 날이어야 한다.
+# (앞선 발주 테스트가 과거 날짜에 판매를 깔아둬서, 특정 날짜를 콕 집어 비교하면 안 된다)
+for m in pos.unclosed_days():
+    assert m["n"] > 0 and m["total"] > 0, m
+    assert not pos.rows("SELECT 1 FROM closings WHERE d=?", (m["d"],)), m
+    assert pos.rows("SELECT 1 FROM sales WHERE substr(at,1,10)=? AND voided_at IS NULL",
+                    (m["d"],)), m
+    assert day(0) > m["d"] >= day(7), m       # 오늘 제외, 7일 이내
+# 마감하면 사라진다
+st = pos.closing_status(day(1))
+pos.save_closing({"date": day(1), "counted_cash": st["expected_cash"]})
+assert day(1) not in miss(), miss()
+# 금액·건수도 같이 준다 (알림에 "얼마짜리 하루인지" 보여주려면 필요).
+# 그 날 다른 판매가 섞여 있을 수 있으니 DB 집계와 대조한다.
+sale_on(2)
+row = next(m for m in pos.unclosed_days() if m["d"] == day(2))
+real = pos.rows("SELECT COUNT(*) n, SUM(total) total FROM sales"
+                " WHERE substr(at,1,10)=? AND voided_at IS NULL", (day(2),))[0]
+assert (row["n"], row["total"]) == (real["n"], real["total"]), (row, real)
+# 취소된 판매만 남은 날은 조르지 않는다 (서랍이 안 움직였다).
+# 그 날 판매를 전부 취소시켜서 확인한다 — 앞 테스트가 깔아둔 판매가 섞여 있으므로.
+sale_on(5)
+assert day(5) in miss(), miss()
+for r in pos.rows("SELECT id FROM sales WHERE substr(at,1,10)=? AND voided_at IS NULL",
+                  (day(5),)):
+    pos.void_sale({"id": r["id"]})
+assert day(5) not in miss(), miss()
+act_as("staff")
+fails(lambda: pos.unclosed_days(), "매니저 이상")
+act_as("manager")
+
 # --------------------------------------------------------------------- 백업
 import glob as _glob
 
@@ -444,7 +501,8 @@ import sqlite3 as _sq
 bk = _sq.connect(files[0])
 assert bk.execute("SELECT COUNT(*) FROM sales").fetchone()[0] == \
        pos.db().execute("SELECT COUNT(*) FROM sales").fetchone()[0]
-assert bk.execute("SELECT COUNT(*) FROM closings").fetchone()[0] == 1
+assert bk.execute("SELECT COUNT(*) FROM closings").fetchone()[0] == \
+       pos.db().execute("SELECT COUNT(*) FROM closings").fetchone()[0]
 bk.close()
 assert pos.list_backups()["files"][0]["size"] > 0
 act_as("manager")

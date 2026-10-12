@@ -65,6 +65,10 @@
   .qty{min-width:calc(34px + var(--tap)/4);font-size:calc(14px + var(--tap)/11);font-weight:600}
   .cell{min-width:calc(46px + var(--tap)/4)}
   #plist button,#cart button{min-height:var(--tap)}
+  #closeWarn{border:2px solid var(--warn);background:#fef2f2;color:#7f1d1d;
+    border-radius:8px;padding:10px 12px;margin-bottom:12px;line-height:1.7}
+  #closeWarn b{color:var(--warn)}
+  #closeWarn button{margin-left:6px}
   @media print{
     /* body.ui-touch 보다 명시도가 낮으면 큰버튼 모드에서 무시된다 — 같이 적어 준다 */
     :root,body.ui-touch,body.ui-mouse{--ctl-py:4px;--ctl-px:6px;--ctl-fs:12px;--tap:0px;--cell-py:4px}
@@ -102,6 +106,7 @@
   <span class="who"><span id="whoName"></span> <button style="padding:3px 8px" onclick="logout()">로그아웃</button></span>
 </header>
 <main>
+<div id="closeWarn" class="noprint" hidden></div>
 
 <!-- ================= 판매 ================= -->
 <section id="pos" class="grid">
@@ -404,6 +409,7 @@ async function start() {
     : '미연동 — 카드 승인번호를 수기로 입력합니다.<br>연동하려면 서버 실행 시 <code>POS_VAN_URL</code> 에 결제모듈 주소를 지정하세요.';
   setLastSale(lastSale());
   run(restoreCart);
+  run(checkClosings);
   setRange(0); $('#txMonth').value = ym();
   $('#clDate').value = ymd();
   run(loadPos); focusScan();
@@ -883,6 +889,27 @@ async function loadRep() {
         </td></tr>`).join('') || '<tr><td class="muted">거래 없음</td></tr>'}</tbody></table></div>`;
 }
 
+/* 마감을 안 하고 넘어간 날 알림. 토스트는 2.6초면 사라져 놓치기 쉬우므로
+   처리할 때까지 남는 배너로 띄운다. */
+async function checkClosings() {
+  const el = $('#closeWarn');
+  el.hidden = true;            // 권한이 없거나 알릴 게 없으면 무조건 숨긴다.
+  if (!can('manager')) return; // 여기서 그냥 빠져나가면 이전 사용자의 배너가 남는다
+  const miss = await api('/api/closing/missing');
+  if (!miss.length) return;
+  el.hidden = false;
+  el.innerHTML = `<b>마감하지 않은 날이 ${miss.length}일 있습니다.</b> 서랍 현금을 맞춰 두세요.<br>`
+    + miss.map(m => `${m.d} · ${m.n}건 ${won(m.total)}원
+        <button onclick="openClosing('${m.d}')">마감하기</button>`).join(' &nbsp; ');
+}
+
+function openClosing(d) {
+  document.querySelector('nav button[data-t=rep]').click();
+  $('#clDate').value = d;
+  run(loadClosing);
+  setTimeout(() => $('#clBody').scrollIntoView({behavior:'smooth'}), 300);
+}
+
 /* ---------------- 일일 마감 ---------------- */
 async function loadClosing() {
   const s = await api('/api/closing?date=' + $('#clDate').value);
@@ -922,7 +949,7 @@ function closeDlg(s) {
       const r = await api('/api/closing', {date:s.date, opening_cash:$('#clOpen').value,
         counted_cash:$('#clCount').value, memo:$('#clMemo').value});
       toast(`마감 완료 — 차액 ${r.closing.diff > 0 ? '+' : ''}${won(r.closing.diff)}원`);
-      run(loadClosing);
+      run(loadClosing); run(checkClosings);
     }, '마감 확정');
   window._cl = s; clCalc();
 }

@@ -555,6 +555,22 @@ def save_closing(b):
     return closing_status(d)
 
 
+def unclosed_days(q=None, b=None):
+    """최근 7일 중 '판매가 있었는데 마감을 안 한' 날.
+
+    판매가 없던 날(휴무)은 마감할 게 없으므로 빼고, 오늘도 뺀다 — 아직 영업 중이다.
+    취소된 판매만 있던 날도 서랍이 안 움직였으니 조르지 않는다.
+    """
+    need("manager")
+    today = datetime.now().strftime("%Y-%m-%d")
+    since = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d")
+    return rows(
+        "SELECT substr(s.at,1,10) d, COUNT(*) n, SUM(s.total) total FROM sales s"
+        " WHERE s.at>=? AND substr(s.at,1,10)<>? AND s.voided_at IS NULL"
+        "   AND NOT EXISTS (SELECT 1 FROM closings c WHERE c.d = substr(s.at,1,10))"
+        " GROUP BY d ORDER BY d", (since, today))
+
+
 def list_closings(q):
     need("manager")
     return rows("SELECT c.*, u.name uname FROM closings c LEFT JOIN users u ON u.id=c.user_id"
@@ -1209,6 +1225,7 @@ ROUTES = {
     ("GET", "/api/closing"): (lambda q, b: closing_status(q.get("date", [None])[0]), "manager"),
     ("POST", "/api/closing"): (lambda q, b: save_closing(b), "manager"),
     ("GET", "/api/closings"): (lambda q, b: list_closings(q), "manager"),
+    ("GET", "/api/closing/missing"): (unclosed_days, "manager"),
     ("GET", "/api/backups"): (list_backups, "owner"),
     ("POST", "/api/backups"): (lambda q, b: backup_api(b), "owner"),
     ("GET", "/api/tax"): (lambda q, b: tax_summary(q), "manager"),

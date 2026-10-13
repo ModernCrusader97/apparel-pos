@@ -467,6 +467,9 @@ $('#scan').onkeydown = e => {
 
 function add(id) {
   const p = products.find(x => x.id === id); if (!p) return;
+  // 담기 버튼은 stock<1 이면 disabled 지만 바코드 스캔은 여길 직접 부른다.
+  // 호출부가 아니라 여기서 막아야 두 경로가 같이 막힌다.
+  if (p.stock < 1) return toast(`[${p.name}] 품절입니다`, true);
   const line = cart.find(l => l.id === id);
   if (line) { if (line.qty >= p.stock) return toast('재고 초과', true); line.qty++; }
   else cart.push({id, name:p.name, price:p.price, qty:1, stock:p.stock});

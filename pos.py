@@ -262,8 +262,16 @@ def login(username, pw):
         _login_log("로그인잠금해제", un, "잠금 시간이 지나 정상 로그인")
     tok = secrets.token_hex(16)
     SESSIONS[tok] = {"uid": u["id"], "name": u["name"], "role": u["role"],
+                     "username": u["username"],
                      "exp": datetime.now() + timedelta(hours=SESSION_HOURS)}
-    return tok, {"name": u["name"], "role": u["role"], "username": u["username"]}
+    return tok, SESSIONS[tok]
+
+
+def session_info(s):
+    """로그인 응답과 세션 조회가 **같은 한 곳**에서 만들어지게 한다.
+    둘이 갈라지면 새로고침으로 복원된 화면만 권한 표시나 결제 흐름이 어긋난다."""
+    return {"name": s["name"], "role": s["role"], "username": s["username"],
+            "van": bool(VAN_URL)}
 
 
 def list_users(q):
@@ -1253,6 +1261,7 @@ def save_settings(b):
 # ---------------------------------------------------------------------- 라우팅
 # (메서드, 경로) -> (핸들러, 필요권한)
 ROUTES = {
+    ("GET", "/api/me"): (lambda q, b: session_info(me()), "staff"),
     ("POST", "/api/me/password"): (lambda q, b: change_my_pw(b), "staff"),
     ("GET", "/api/users"): (lambda q, b: list_users(q), "owner"),
     ("POST", "/api/users"): (lambda q, b: save_user(b), "owner"),
@@ -1358,7 +1367,7 @@ class H(BaseHTTPRequestHandler):
                 tok, who = login(body.get("username"), body.get("password"))
             except Bad as e:
                 return self._json(e.code, {"error": str(e)})
-            return self._json(200, {**who, "van": bool(VAN_URL)}, {
+            return self._json(200, session_info(who), {
                 "Set-Cookie": f"sid={tok}; Path=/; HttpOnly; SameSite=Strict; "
                               f"Max-Age={SESSION_HOURS * 3600}"})
         if u.path == "/api/logout":

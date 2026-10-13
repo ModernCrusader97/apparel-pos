@@ -88,6 +88,10 @@ try:
     st, who, OWNER = call("/api/login", {"username": "admin", "password": "owner123"})
     check("점주 로그인", who["role"], "owner")
     check("VAN 연동 인식", who["van"], True)
+    # 새로고침 세션 복구용. 로그인 응답과 같은 정보를 줘야 한다
+    _, me, _ = call("/api/me", None, OWNER)
+    check("세션 조회가 로그인 응답과 동일", me, who, (me, who))
+    check("세션 없이 조회하면 401", call("/api/me")[0], 401)
 
     print("[로그인 시도 제한]")
     # 실제 계정을 묶지 않도록 쓰고 버리는 아이디로 확인한다

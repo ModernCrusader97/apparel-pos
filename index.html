@@ -83,7 +83,7 @@
 </head>
 <body>
 
-<div id="login" class="card" style="max-width:320px;margin:14vh auto">
+<div id="login" class="card" style="max-width:320px;margin:14vh auto" hidden>
   <h2 style="margin:0 0 4px">매장 POS</h2>
   <div class="muted" style="margin-bottom:12px">직원 계정으로 로그인하세요</div>
   <div class="f"><label>아이디</label><input id="lid" autofocus autocomplete="username"></div>
@@ -1100,6 +1100,24 @@ async function changePw() {
 }
 
 $('#lpw').onkeydown = $('#lid').onkeydown = e => e.key === 'Enter' && doLogin();
+
+function showLogin() {
+  $('#login').hidden = false; $('#app').hidden = true;
+  $('#lid').focus();
+}
+
+/* 세션 쿠키가 12시간 살아 있는데도 새로고침마다 비밀번호를 다시 치게 하지 않는다.
+   api() 를 쓰면 안 된다 — 401 에서 location.reload() 를 해서 무한 새로고침이 된다. */
+(async function boot() {
+  try {
+    const r = await fetch('/api/me');
+    if (!r.ok) return showLogin();          // 세션 없음·만료 → 지금까지와 같다
+    ME = await r.json();
+    start();
+  } catch {                                  // 서버가 꺼져 있어도 로그인 화면은 띄운다
+    showLogin();
+  }
+})();
 </script>
 </body>
 </html>

@@ -717,7 +717,9 @@ function renderMatrix(list) {
     const at = (c, s) => items.find(i => i.color === c && i.size === s);
     const sum = items.reduce((a, i) => a + i.stock, 0);
     return `<h3 class="sec" style="margin-top:14px">${esc(code)} · ${esc(title(items[0]))}
-        <span class="muted">${won(items[0].price)}원 · 총 ${sum}장</span></h3>
+        <span class="muted">${won(items[0].price)}원 · 총 ${sum}장</span>
+        ${can('manager') ? `<button class="noprint" style="margin-left:8px"
+          onclick="tagDlg('${esc(code)}')">택 바코드 등록</button>` : ''}</h3>
       <table><thead><tr><th>색상</th>${sizes.map(s => `<th class="num">${esc(s)}</th>`).join('')}<th class="num">합계</th></tr></thead>
       <tbody>${colors.map(c => {
         const row = sizes.map(s => at(c, s));
@@ -807,6 +809,48 @@ function editProduct(p) {
         style_code:$('#fStyle').value, color:$('#fColor').value, size:$('#fSize').value});
       toast('저장했습니다'); run(loadInv);
     });
+}
+
+/* 제조사 택 바코드를 SKU 에 연결한다. 일괄등록이 만든 '품번-색상-사이즈' 는
+   실제 옷에 없으므로, 그대로 두면 매장에서 스캔 자체를 못 한다.
+   상품수정 창에도 바코드 칸은 있다 — 여기가 하는 일은 '연속 등록'이다. */
+async function tagDlg(style) {
+  const list = (await api('/api/products?q=' + encodeURIComponent(style)))
+    .filter(p => p.style_code === style);
+  let i = 0;
+  const render = () => {
+    const p = list[i];
+    $('#dlgBody').innerHTML = `<h3 style="margin:0 0 4px">택 바코드 등록 — ${esc(style)}</h3>
+      <div class="muted" style="margin-bottom:10px">옷의 택을 스캔하면 저장하고 다음으로 넘어갑니다
+        (${i + 1}/${list.length})</div>
+      <div class="f"><label>${esc(p.color)} / ${esc(p.size)}</label>
+        <input id="tagCode" value="${esc(p.barcode || '')}" placeholder="택 바코드를 스캔하세요"></div>
+      <table>${list.map((x, n) => `<tr style="${n === i ? 'font-weight:700' : ''}">
+        <td>${n === i ? '▶' : ''} ${esc(x.color)}/${esc(x.size)}</td>
+        <td class="muted">${esc(x.barcode || '(없음)')}</td></tr>`).join('')}</table>
+      <div class="row" style="justify-content:flex-end;margin-top:12px">
+        <button onclick="dlgEl.close();run(loadInv)">닫기</button>
+        <button id="tagSkip">건너뛰기</button>
+        <button class="pri" id="tagSave">저장 후 다음</button></div>`;
+    const next = () => { if (++i < list.length) render();
+                         else { dlgEl.close(); toast('택 바코드 등록을 마쳤습니다'); run(loadInv); } };
+    $('#tagSkip').onclick = next;
+    const save = async () => {
+      const p2 = list[i], code = $('#tagCode').value.trim();
+      if (code !== (p2.barcode || '')) {
+        await api('/api/products', {id:p2.id, name:p2.name, cost:p2.cost, price:p2.price,
+          min_stock:p2.min_stock, category:p2.category, style_code:p2.style_code,
+          color:p2.color, size:p2.size, barcode:code});
+        p2.barcode = code || null;
+      }
+      next();
+    };
+    $('#tagSave').onclick = () => run(save);
+    $('#tagCode').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); run(save); } };
+    $('#tagCode').focus(); $('#tagCode').select();
+  };
+  render();
+  dlgEl.showModal();
 }
 
 function bulkProduct() {

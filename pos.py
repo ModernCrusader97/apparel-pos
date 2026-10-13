@@ -693,6 +693,9 @@ def save_product(b):
                           "category=?,style_code=?,color=?,size=? WHERE id=?", f + (pid,))
                 if old["price"] != f[3]:  # 가격 변경은 반드시 흔적을 남긴다
                     audit(c, "가격변경", f"{name}: {old['price']} -> {f[3]}원")
+                if old["barcode"] != f[1]:  # 바코드는 판매 경로의 핵심이라 같은 취급
+                    audit(c, "바코드변경",
+                          f"{name}: {old['barcode'] or '(없음)'} -> {f[1] or '(없음)'}")
             else:
                 pid = c.execute("INSERT INTO products(name,barcode,cost,price,min_stock,"
                                 "category,style_code,color,size,stock)"
@@ -705,7 +708,11 @@ def save_product(b):
                               "user_id,at) VALUES(?,?,'초기',?,?,?)",
                               (pid, init, "상품 등록", me()["uid"], now()))
     except sqlite3.IntegrityError:
-        raise Bad("이미 등록된 바코드입니다")
+        # 어느 상품이 그 바코드를 쓰는지 말해 줘야 매장에서 해결할 수 있다
+        owner = db().execute("SELECT name FROM products WHERE barcode=? AND active=1",
+                             (f[1],)).fetchone()
+        raise Bad(f"이미 [{owner['name']}] 이(가) 쓰는 바코드입니다" if owner
+                  else "이미 등록된 바코드입니다")
     return {"id": pid}
 
 

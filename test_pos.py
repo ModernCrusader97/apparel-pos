@@ -336,6 +336,43 @@ fails(lambda: pos.save_closing({"counted_cash": -1}), "실제 현금")
 tomorrow = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
 assert pos.closing_status(tomorrow)["opening_cash"] == st4["expected_cash"]
 
+# --------------------------------------------------------- 제조사 택 바코드 등록
+act_as("manager")
+TAG = pos.save_product_bulk({"style_code": "TAG-01", "name": "택테스트", "price": 10000,
+                             "cost": 5000, "colors": "블랙", "sizes": "S,M"})
+sku = pos.list_products({"q": ["TAG-01"]})
+s_sku, m_sku = sku[0], sku[1]
+assert s_sku["barcode"] == "TAG-01-블랙-S"
+
+
+def set_barcode(p, code):
+    return pos.save_product({**{k: p[k] for k in ("id", "name", "cost", "price", "min_stock",
+                                                  "category", "style_code", "color", "size")},
+                             "barcode": code})
+
+
+# 제조사 택 바코드로 교체
+set_barcode(s_sku, "8809999001234")
+assert pos.list_products({"q": ["8809999001234"]})[0]["id"] == s_sku["id"], "그 바코드로 안 잡힌다"
+# 바코드 변경은 감사 로그에 남는다 (판매 경로의 핵심이므로)
+act_as("owner")
+assert any(a["action"] == "바코드변경" and "8809999001234" in a["detail"]
+           for a in pos.audit_log({})), "바코드 변경이 감사 로그에 없음"
+act_as("manager")
+# 다른 상품이 쓰는 바코드면 **그 상품 이름을 알려주고** 막는다
+fails(lambda: set_barcode(m_sku, "8809999001234"), "택테스트 블랙/S")
+# 막혔으면 원래 바코드가 그대로여야 한다
+assert pos.list_products({"q": ["TAG-01"]})[1]["barcode"] == "TAG-01-블랙-M"
+# 공백만 떼고 그대로 저장한다 (대소문자·하이픈을 임의로 바꾸지 않는다)
+set_barcode(m_sku, "  ab-CD_12  ")
+assert pos.list_products({"q": ["TAG-01"]})[1]["barcode"] == "ab-CD_12"
+# 비우면 바코드 없음으로 돌아간다
+set_barcode(m_sku, "")
+assert pos.list_products({"q": ["TAG-01"]})[1]["barcode"] is None
+# 두 상품이 동시에 바코드 없음인 건 허용된다 (UNIQUE 는 NULL 을 중복으로 보지 않는다)
+set_barcode(s_sku, "")
+assert [p["barcode"] for p in pos.list_products({"q": ["TAG-01"]})] == [None, None]
+
 # ------------------------------------------------------------------- 발주 제안
 act_as("manager")
 RO = pos.save_product({"name": "발주테스트", "price": 10000, "cost": 4000,

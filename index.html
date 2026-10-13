@@ -180,9 +180,21 @@
       <option value="matrix">품번별 보기</option>
       <option value="list">목록 보기</option>
       <option value="order" class="mgr">발주 제안</option>
+      <option value="count" class="mgr">재고 실사</option>
     </select>
     <button class="pri mgr" onclick="bulkProduct()">+ 색상/사이즈 일괄등록</button>
     <button class="mgr" onclick="editProduct()">+ 단품</button>
+  </div>
+  <div class="card" id="invCount" hidden>
+    <div class="row noprint" style="margin-bottom:8px">
+      <input id="cntScan" placeholder="옷의 바코드를 스캔하세요" style="flex:1;font-size:16px">
+      <button onclick="run(cntApply)" class="pri">장부에 반영</button>
+      <button onclick="cntReset()">세던 것 지우기</button>
+    </div>
+    <div class="muted" style="margin-bottom:8px">
+      위 검색창의 범위에서 셉니다. <b>스캔하지 않은 SKU 는 건드리지 않습니다</b> — 부분 실사도 됩니다.
+      세던 수량은 이 기기에 저장돼 새로고침해도 남습니다.</div>
+    <div id="cntBody"></div>
   </div>
   <div class="card" id="invOrder" hidden>
     <div class="row noprint" style="margin-bottom:10px">
@@ -732,6 +744,82 @@ function renderMatrix(list) {
   }).join('') || '<div class="muted">상품이 없습니다</div>';
 }
 
+/* 재고 실사 — 스캔하며 세고 장부와 비교한다.
+   센 수량은 기기에 저장한다. 34개 SKU 를 세다 새로고침 한 번에 날아가면 안 된다. */
+let cntScope = [];
+const cntLoad = () => { try { return JSON.parse(localStorage.getItem('count') || '{}'); } catch { return {}; } };
+const cntSave = c => { try { localStorage.setItem('count', JSON.stringify(c)); } catch {} };
+function cntReset() {
+  if (!confirm('세던 수량을 모두 지울까요?')) return;
+  try { localStorage.removeItem('count'); } catch {}
+  run(loadCount);
+}
+
+async function loadCount() {
+  cntScope = await api('/api/products?q=' + encodeURIComponent($('#isearch').value));
+  const counted = cntLoad();
+  const rows = cntScope.map(p => ({...p, n: counted[p.id]}));
+  const done = rows.filter(r => r.n !== undefined);
+  const diff = done.filter(r => r.n !== r.stock);
+  $('#cntBody').innerHTML = `
+    <div class="row" style="gap:24px;margin-bottom:10px">
+      <div><div class="muted">범위</div><div class="big">${rows.length} SKU</div></div>
+      <div><div class="muted">센 것</div><div class="big">${done.length}</div></div>
+      <div><div class="muted">미확인</div><div class="big">${rows.length - done.length}</div></div>
+      <div><div class="muted">차이 나는 SKU</div><div class="big ${diff.length?'danger':''}">${diff.length}</div></div>
+    </div>
+    <table><thead><tr><th>상품</th><th class="num">장부</th><th class="num">실사</th>
+      <th class="num">차이</th><th></th></tr></thead><tbody>
+    ${rows.map(r => `<tr>
+      <td><b>${esc(r.name)}</b> <span class="muted">${esc(r.barcode||'')}</span></td>
+      <td class="num muted">${r.stock}</td>
+      <td class="num">${r.n === undefined ? '<span class="muted">미확인</span>' : `<b>${r.n}</b>`}</td>
+      <td class="num ${r.n !== undefined && r.n !== r.stock ? 'danger' : 'muted'}">
+        ${r.n === undefined ? '-' : (r.n - r.stock > 0 ? '+' : '') + (r.n - r.stock)}</td>
+      <td class="num"><button onclick="cntSet(${r.id})">수량 입력</button></td></tr>`).join('')
+      || '<tr><td class="muted">범위에 상품이 없습니다</td></tr>'}</tbody></table>`;
+  setTimeout(() => $('#cntScan')?.focus(), 50);
+}
+
+function cntBump(id, by) {
+  const c = cntLoad();
+  c[id] = Math.max(0, (c[id] || 0) + by);
+  cntSave(c); run(loadCount);
+}
+const cntSet = id => {
+  const p = cntScope.find(x => x.id === id), c = cntLoad();
+  const v = prompt(`${p.name} — 실제로 센 수량`, c[id] ?? p.stock);
+  if (v === null) return;
+  c[id] = Math.max(0, parseInt(v, 10) || 0); cntSave(c); run(loadCount);
+};
+
+$('#cntScan').onkeydown = e => {
+  if (e.key !== 'Enter') return;
+  const v = $('#cntScan').value.trim(); $('#cntScan').value = '';
+  if (!v) return;
+  const hit = cntScope.find(p => p.barcode === v);
+  if (!hit) return toast('범위 안에 그 바코드가 없습니다: ' + v, true);
+  cntBump(hit.id, 1);                       // 같은 바코드를 또 찍으면 누적된다
+  toast(`${hit.name} ${(cntLoad()[hit.id])}개`);
+};
+
+async function cntApply() {
+  const counted = cntLoad();
+  const items = cntScope.filter(p => counted[p.id] !== undefined)
+    .map(p => ({product_id: p.id, counted: counted[p.id]}));
+  if (!items.length) return toast('센 SKU 가 없습니다', true);
+  const diff = items.filter(i => {
+    const p = cntScope.find(x => x.id === i.product_id); return i.counted !== p.stock; });
+  if (!confirm(`센 ${items.length}개 SKU 중 ${diff.length}개가 장부와 다릅니다.
+`
+             + `장부를 실사 수량에 맞출까요? (입출고 이력과 감사 로그에 남습니다)`)) return;
+  const note = prompt('실사 메모 (예: 2026 4분기 실사)', '실사') ?? '실사';
+  const r = await api('/api/stock/count', {items, note});
+  try { localStorage.removeItem('count'); } catch {}
+  toast(r.adjusted.length ? `${r.adjusted.length}개 SKU 를 조정했습니다` : '차이가 없어 조정할 게 없었습니다');
+  run(loadCount);
+}
+
 /* 발주 제안 — 판매속도로 "몇 장 더 시켜라"를 뽑는다 */
 const roQuery = () => `days=${$('#roDays').value}&lead=${$('#roLead').value}&cover=${$('#roCover').value}`;
 const FLAG = {품절:'low', 보충:'wait', 안팔림:'', 충분:'ok'};
@@ -769,11 +857,13 @@ async function loadOrder() {
 
 async function loadInv() {
   const view = $('#iview').value;
+  $('#invCount').hidden = view !== 'count';
   $('#invOrder').hidden = view !== 'order';
   $('#invMatrix').hidden = view !== 'matrix';
   $('#invList').hidden = view !== 'list';
-  $('#invMoves').hidden = view === 'order';
+  $('#invMoves').hidden = view === 'order' || view === 'count';
   if (view === 'order') return loadOrder();
+  if (view === 'count') return loadCount();
   const q = '?q=' + encodeURIComponent($('#isearch').value) + ($('#ilow').checked ? '&low=1' : '');
   const list = await api('/api/products' + q);
   if (view === 'matrix') renderMatrix(list);

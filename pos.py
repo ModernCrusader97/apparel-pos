@@ -774,8 +774,21 @@ def delete_product(pid):
 SENSITIVE_REASONS = ("폐기", "실사조정")
 
 
+def _apply_stock(c, p, delta, reason, note=""):
+    """재고를 바꾸는 길은 여기 하나다. 장부(stock_moves)와 감사 로그가 갈라지면
+    '재고가 왜 이렇게 됐나'를 추적할 수 없다. 새 경로를 만들지 말고 여기를 쓸 것."""
+    if p["stock"] + delta < 0:
+        raise Bad(f"[{p['name']}] 재고 부족: 현재 {p['stock']}개")
+    c.execute("UPDATE products SET stock=stock+? WHERE id=?", (delta, p["id"]))
+    c.execute("INSERT INTO stock_moves(product_id,delta,reason,note,user_id,at)"
+              " VALUES(?,?,?,?,?,?)", (p["id"], delta, reason, note, me()["uid"], now()))
+    if reason in SENSITIVE_REASONS:
+        audit(c, f"재고{reason}", f"{p['name']} {delta:+d}개 ({note})")
+    return p["stock"] + delta
+
+
 def move_stock(b):
-    """입고/폐기/실사조정. delta 양수=입고, 음수=차감."""
+    """입고/폐기/실사조정 한 건. delta 양수=입고, 음수=차감."""
     delta = as_int(b.get("delta"), "수량")
     if delta == 0:
         raise Bad("수량이 0입니다")
@@ -787,15 +800,38 @@ def move_stock(b):
                       (as_int(b.get("product_id"), "상품"),)).fetchone()
         if not p:
             raise Bad("상품을 찾을 수 없습니다", 404)
-        if p["stock"] + delta < 0:
-            raise Bad(f"재고 부족: 현재 {p['stock']}개")
-        c.execute("UPDATE products SET stock=stock+? WHERE id=?", (delta, p["id"]))
-        c.execute("INSERT INTO stock_moves(product_id,delta,reason,note,user_id,at)"
-                  " VALUES(?,?,?,?,?,?)",
-                  (p["id"], delta, reason, b.get("note", ""), me()["uid"], now()))
-        if reason in SENSITIVE_REASONS:
-            audit(c, f"재고{reason}", f"{p['name']} {delta:+d}개 ({b.get('note','')})")
-        return {"stock": p["stock"] + delta}
+        return {"stock": _apply_stock(c, p, delta, reason, b.get("note", ""))}
+
+
+def apply_count(b):
+    """재고 실사 반영. 센 수량과 **반영 시점 장부**의 차이만큼 조정한다.
+
+    세는 동안에도 판매는 일어난다. 세기 시작할 때의 장부와 비교하면 그 사이 팔린 만큼이
+    실사 오차로 둔갑하므로, 여기서 다시 읽은 값과 비교한다.
+    스캔하지 않은 SKU 는 애초에 items 에 없어야 한다 — 0 으로 단정하지 않는다.
+    """
+    need("manager")
+    items = b.get("items") or []
+    if not items:
+        raise Bad("반영할 항목이 없습니다")
+    note = (b.get("note") or "실사").strip()[:60]
+    out = []
+    with tx() as c:                       # 한 건이라도 실패하면 전부 되돌린다
+        for it in items:
+            pid = as_int(it.get("product_id"), "상품")
+            counted = as_int(it.get("counted"), "실사 수량", 0)
+            p = c.execute("SELECT * FROM products WHERE id=? AND active=1", (pid,)).fetchone()
+            if not p:
+                raise Bad(f"상품 {pid} 없음(삭제됐을 수 있습니다)", 404)
+            delta = counted - p["stock"]
+            if delta == 0:                # 맞는 건 장부를 건드리지 않는다
+                continue
+            _apply_stock(c, p, delta, "실사조정", note)
+            out.append({"id": pid, "name": p["name"], "before": p["stock"],
+                        "after": counted, "delta": delta})
+        if out:
+            audit(c, "재고실사", f"{len(out)}개 SKU 조정 ({note})")
+    return {"adjusted": out}
 
 
 # ------------------------------------------------------------------ 고객/포인트
@@ -1279,6 +1315,7 @@ ROUTES = {
     ("POST", "/api/products/bulk"): (lambda q, b: save_product_bulk(b), "manager"),
     ("POST", "/api/products/delete"): (lambda q, b: delete_product(b.get("id")), "manager"),
     ("POST", "/api/stock"): (lambda q, b: move_stock(b), "staff"),
+    ("POST", "/api/stock/count"): (lambda q, b: apply_count(b), "manager"),
     ("GET", "/api/stock/moves"): (lambda q, b: rows(
         "SELECT m.*, p.name, u.name uname FROM stock_moves m"
         " JOIN products p ON p.id=m.product_id LEFT JOIN users u ON u.id=m.user_id"

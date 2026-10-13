@@ -336,6 +336,59 @@ fails(lambda: pos.save_closing({"counted_cash": -1}), "실제 현금")
 tomorrow = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
 assert pos.closing_status(tomorrow)["opening_cash"] == st4["expected_cash"]
 
+# ----------------------------------------------------------------- 재고 실사
+act_as("manager")
+pos.save_product_bulk({"style_code": "CNT-01", "name": "실사테스트", "price": 10000,
+                       "cost": 5000, "colors": "블랙", "sizes": "S,M,L", "stock": 10})
+cnt = pos.list_products({"q": ["CNT-01"]})
+c_s, c_m, c_l = cnt[0], cnt[1], cnt[2]
+
+# 센 수량과 장부가 다르면 그 차이만큼 조정한다
+r = pos.apply_count({"items": [{"product_id": c_s["id"], "counted": 8},
+                               {"product_id": c_m["id"], "counted": 12}], "note": "4분기 실사"})
+assert {x["id"]: x["delta"] for x in r["adjusted"]} == {c_s["id"]: -2, c_m["id"]: 2}, r
+after = {p["id"]: p["stock"] for p in pos.list_products({"q": ["CNT-01"]})}
+assert after[c_s["id"]] == 8 and after[c_m["id"]] == 12
+# 스캔 안 된 SKU 는 건드리지 않는다 (부분 실사)
+assert after[c_l["id"]] == 10, "미스캔 SKU 가 바뀌었다"
+
+# 기존 '실사조정' 장부를 그대로 쓴다 — 새 경로를 만들면 이력이 따로 논다
+mv = pos.rows("SELECT delta,reason,note FROM stock_moves WHERE product_id=? ORDER BY id DESC",
+              (c_s["id"],))[0]
+assert (mv["delta"], mv["reason"], mv["note"]) == (-2, "실사조정", "4분기 실사"), mv
+act_as("owner")
+log = pos.audit_log({})
+assert any(a["action"] == "재고실사" and "2개 SKU" in a["detail"] for a in log), "요약이 없음"
+assert any(a["action"] == "재고실사조정" and "실사테스트 블랙/S" in a["detail"] for a in log), "SKU별 기록이 없음"
+act_as("manager")
+
+# 차이가 없으면 장부를 건드리지 않는다
+n0 = len(pos.rows("SELECT id FROM stock_moves WHERE product_id=?", (c_l["id"],)))
+assert pos.apply_count({"items": [{"product_id": c_l["id"], "counted": 10}]})["adjusted"] == []
+assert len(pos.rows("SELECT id FROM stock_moves WHERE product_id=?", (c_l["id"],))) == n0
+
+# 세는 동안 판매가 일어나면, 반영은 **그 시점 장부**와 비교해야 한다
+act_as("staff")
+pos.create_sale({"items": [{"product_id": c_l["id"], "qty": 3}], "pay_method": "cash"})
+act_as("manager")
+# 장부는 이제 7. 실사에서 10장을 셌다면 +3 이 되어야 한다 (판매 전 10과 비교해 0 이 아니라)
+r = pos.apply_count({"items": [{"product_id": c_l["id"], "counted": 10}]})
+assert r["adjusted"][0]["delta"] == 3, r
+assert r["adjusted"][0]["before"] == 7, r
+
+# 방어
+fails(lambda: pos.apply_count({"items": []}), "반영할 항목")
+fails(lambda: pos.apply_count({"items": [{"product_id": c_s["id"], "counted": -1}]}), "실사 수량")
+fails(lambda: pos.apply_count({"items": [{"product_id": 999999, "counted": 1}]}), "없")
+# 한 건이라도 실패하면 전부 되돌린다 (한 트랜잭션)
+before = {p["id"]: p["stock"] for p in pos.list_products({"q": ["CNT-01"]})}
+fails(lambda: pos.apply_count({"items": [{"product_id": c_s["id"], "counted": 99},
+                                         {"product_id": 999999, "counted": 1}]}), "없")
+assert {p["id"]: p["stock"] for p in pos.list_products({"q": ["CNT-01"]})} == before
+act_as("staff")
+fails(lambda: pos.apply_count({"items": [{"product_id": c_s["id"], "counted": 1}]}), "매니저 이상")
+act_as("manager")
+
 # --------------------------------------------------------- 제조사 택 바코드 등록
 act_as("manager")
 TAG = pos.save_product_bulk({"style_code": "TAG-01", "name": "택테스트", "price": 10000,

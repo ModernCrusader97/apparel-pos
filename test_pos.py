@@ -336,6 +336,71 @@ fails(lambda: pos.save_closing({"counted_cash": -1}), "실제 현금")
 tomorrow = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
 assert pos.closing_status(tomorrow)["opening_cash"] == st4["expected_cash"]
 
+# ------------------------------------------------------------ 영수증 프린터
+act_as("manager")
+pos.save_product({"name": "프린터테스트", "price": 12000, "cost": 5000, "stock": 10})
+PRN = pos.list_products({"q": ["프린터테스트"]})[0]["id"]
+act_as("staff")
+psale = pos.create_sale({"items": [{"product_id": PRN, "qty": 2}], "pay_method": "cash"})
+
+# 프린터 미설정이면 아무 일도 안 하고, 판매는 그대로다
+assert pos.PRINTER is None
+assert pos.print_receipt(psale["id"])["printed"] is False
+
+# 가짜 네트워크 프린터를 띄워 실제로 받은 바이트를 본다
+import socket as _sock, threading as _th
+
+got = []
+
+
+def _fake_printer(srv):
+    conn, _ = srv.accept()
+    with conn:
+        buf = b""
+        conn.settimeout(2)
+        try:
+            while True:
+                chunk = conn.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        except Exception:
+            pass
+    got.append(buf)
+
+
+_srv = _sock.socket()
+_srv.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+_srv.bind(("127.0.0.1", 0))
+_srv.listen(1)
+_th.Thread(target=_fake_printer, args=(_srv,), daemon=True).start()
+pos.PRINTER = f"127.0.0.1:{_srv.getsockname()[1]}"
+assert pos.print_receipt(psale["id"])["printed"] is True
+for _ in range(50):
+    if got:
+        break
+    pos.time.sleep(0.05)
+_srv.close()
+assert got, "프린터가 아무것도 못 받았다"
+raw = got[0]
+assert raw.startswith(b"\x1b@"), "초기화 명령(ESC @)이 없다"
+assert b"\x1dV" in raw, "용지 절단 명령이 없다"
+txt = raw.decode(pos.PRINTER_CP, "replace")
+assert "프린터테스트" in txt and "24,000" in txt, txt[:200]
+assert "우리매장" in txt or "매장" in txt, txt[:200]
+
+# 프린터가 죽어 있어도 판매는 되고, 실패가 감사 로그에 남는다
+pos.PRINTER = "127.0.0.1:9"          # 아무것도 안 듣는 포트
+r = pos.print_receipt(psale["id"])
+assert r["printed"] is False and "실패" in r["reason"], r
+act_as("staff")
+ok_sale = pos.create_sale({"items": [{"product_id": PRN, "qty": 1}], "pay_method": "cash"})
+assert ok_sale["id"], "프린터가 죽었다고 판매가 막히면 안 된다"
+act_as("owner")
+assert any(a["action"] == "영수증출력실패" for a in pos.audit_log({})), "실패가 감사 로그에 없음"
+pos.PRINTER = None
+act_as("manager")
+
 # -------------------------------------------------------------- 요청 키(멱등성)
 act_as("manager")
 pos.save_product({"name": "멱등테스트", "price": 5000, "cost": 2000, "stock": 50})

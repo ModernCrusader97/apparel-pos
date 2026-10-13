@@ -13,7 +13,7 @@ ponytail: ThreadingHTTPServer + SQLite. 매장 한 곳(단말 수 대)까지는 
 여러 지점/수백 TPS가 되면 그때 uvicorn+Postgres로 옮기면 됨.
 """
 import argparse, calendar, csv, glob, hashlib, io, json, math, os, re, secrets, sqlite3
-import threading, time, urllib.request
+import socket, threading, time, unicodedata, urllib.request
 from datetime import datetime, timedelta
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -33,6 +33,13 @@ LOGIN_PRUNE_AT = 500        # 없는 아이디를 계속 던져 메모리를 불
 # VAN(카드단말) 연동 — 매장 PC에 설치된 결제모듈 주소. 미설정이면 수기 승인번호 모드.
 VAN_URL = os.environ.get("POS_VAN_URL")
 VAN_TIMEOUT = int(os.environ.get("POS_VAN_TIMEOUT", "60"))
+
+# 영수증 프린터. 네트워크(LAN) 프린터만 가능하다 — 브라우저도 서버도 USB 프린터에
+# 직접 말할 수 없다. 미설정이면 지금처럼 브라우저 인쇄를 쓴다.
+PRINTER = os.environ.get("POS_PRINTER")              # "host" 또는 "host:9100"
+PRINTER_CP = os.environ.get("POS_PRINTER_CP", "cp949")   # 기종마다 다르다 — 교정 손잡이
+PRINTER_WIDTH = int(os.environ.get("POS_PRINTER_WIDTH", "42"))  # 80mm=42, 58mm=32
+PRINTER_TIMEOUT = int(os.environ.get("POS_PRINTER_TIMEOUT", "5"))
 
 BACKUP_DIR = os.environ.get("POS_BACKUP_DIR", os.path.join(BASE, "backup"))
 BACKUP_KEEP = int(os.environ.get("POS_BACKUP_KEEP", "14"))  # 보관 일수
@@ -277,7 +284,7 @@ def session_info(s):
     """로그인 응답과 세션 조회가 **같은 한 곳**에서 만들어지게 한다.
     둘이 갈라지면 새로고침으로 복원된 화면만 권한 표시나 결제 흐름이 어긋난다."""
     return {"name": s["name"], "role": s["role"], "username": s["username"],
-            "van": bool(VAN_URL)}
+            "van": bool(VAN_URL), "printer": bool(PRINTER)}
 
 
 def list_users(q):
@@ -1089,6 +1096,7 @@ def create_sale(b):
                 pass  # 취소까지 실패하면 단말 매출전표로 수기 취소해야 한다
         raise
 
+    print_receipt(sid)              # 실패해도 판매는 유효하다
     if cr and total > 0:
         res = issue_cash_receipt(sid, cr_kind, cr_ident, total)
         out = sale_detail(sid)          # 발급 결과를 영수증에 싣기 위해 발급 후에 읽는다
@@ -1157,6 +1165,92 @@ def sale_detail(sid):
     d["store"] = {k: setting(k) for k in
                   ("store_name", "store_biz_no", "store_ceo", "store_addr", "store_tel")}
     return d
+
+
+# ------------------------------------------------------------------ 영수증 출력
+def _w(t):
+    """출력 폭. 한글·전각은 두 칸을 먹으므로 len() 으로 줄을 맞추면 어긋난다."""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in t)
+
+
+def _pad(left, right, width):
+    return left + " " * max(1, width - _w(left) - _w(right)) + right
+
+
+def receipt_text(s, width=None):
+    """감열 프린터용 평문 영수증. 화면 영수증과 같은 내용을 좁은 폭에 맞춘다."""
+    w = width or PRINTER_WIDTH
+    st, L = s["store"], []
+    center = lambda t: " " * max(0, (w - _w(t)) // 2) + t
+    L.append(center(st["store_name"]))
+    if st["store_biz_no"]:
+        biz = re.sub(r"^(\d{3})(\d{2})(\d{5})$", r"\1-\2-\3", st["store_biz_no"])
+        L.append(center(f"사업자 {biz} {st['store_ceo']}".strip()))
+    for k in ("store_addr", "store_tel"):
+        if st[k]:
+            L.append(center(st[k]))
+    if s.get("voided_at"):
+        L += ["", center("*** 취 소 된 거 래 ***"),
+              center(f"{s['voided_at'].replace('T', ' ')} 취소"),
+              center("이 영수증은 증빙이 되지 않습니다")]
+    L += ["-" * w, f"{s['at'].replace('T', ' ')}  No.{s['id']}  {s.get('uname') or ''}", "-" * w]
+    for i in s["items"]:
+        L.append(i["name"])
+        tail = f"{i['qty']} x {i['price']:,}"
+        if i.get("list_price") and i["list_price"] != i["price"]:
+            tail = f"{i['qty']} x {i['price']:,} (정가 {i['list_price']:,})"
+        L.append(_pad("  " + tail, f"{i['price'] * i['qty']:,}", w))
+    L.append("-" * w)
+    if s.get("list_total") and s["list_total"] != s["subtotal"]:
+        L.append(_pad("정가", f"{s['list_total']:,}", w))
+        L.append(_pad("시즌할인", f"-{s['list_total'] - s['subtotal']:,}", w))
+    L.append(_pad("소계", f"{s['subtotal']:,}", w))
+    if s["discount"]:
+        L.append(_pad("할인", f"-{s['discount']:,}", w))
+    if s["point_used"]:
+        L.append(_pad("포인트사용", f"-{s['point_used']:,}", w))
+    L.append(_pad("결제", f"{s['total']:,}원", w))
+    supply = round(s["total"] / 1.1)
+    L.append(_pad("  공급가액", f"{supply:,}", w))
+    L.append(_pad("  부가세", f"{s['total'] - supply:,}", w))
+    L.append("-" * w)
+    pay = {"card": "카드", "cash": "현금", "transfer": "계좌이체"}.get(s["pay_method"], s["pay_method"])
+    L.append(pay + (f" {s['installment']}개월" if s.get("installment") else "")
+             + (f" {s['card_name']}" if s.get("card_name") else ""))
+    if s.get("approval_no"):
+        L.append(f"승인번호 {s['approval_no']}")
+    for r in (s.get("receipts") or []):
+        if not r["voided_at"]:
+            L.append(f"현금영수증({r['kind']}) {r['approval_no'] or r['status']}")
+    if s.get("customer"):
+        cu = s["customer"]
+        L.append(f"{cu['name'] or ''} {cu['phone']}".strip())
+        L.append(f"적립 {s['point_earned']}P / 잔여 {cu['points']:,}P")
+    return "\n".join(L)
+
+
+def print_receipt(sale_id, who=None):
+    """감열 프린터로 출력. **판매가 끝난 뒤** 부르고, 실패해도 판매를 되돌리지 않는다."""
+    if not PRINTER:
+        return {"printed": False, "reason": "프린터 미연동"}
+    try:
+        text = receipt_text(sale_detail(sale_id))
+        host, _, port = PRINTER.partition(":")
+        data = (bytes([0x1b, 0x40])                      # ESC @ 초기화
+                + text.encode(PRINTER_CP, "replace") + b"\n" * 4
+                + bytes([0x1d, 0x56, 0x42, 0x00]))       # GS V B 0 부분 절단
+        with socket.create_connection((host, int(port or 9100)), PRINTER_TIMEOUT) as sk:
+            sk.sendall(data)
+        return {"printed": True}
+    except Exception as e:
+        msg = f"영수증 출력 실패: {e}"
+        print(msg)
+        try:
+            with tx() as c:
+                audit(c, "영수증출력실패", f"#{sale_id} {e}", who=who)
+        except Exception:
+            pass
+        return {"printed": False, "reason": msg}
 
 
 # ---------------------------------------------------------------------- 정산
@@ -1399,6 +1493,7 @@ ROUTES = {
     ("POST", "/api/points"): (lambda q, b: adjust_points(b), "manager"),
     ("POST", "/api/sales"): (lambda q, b: create_sale(b), "staff"),
     ("GET", "/api/sale"): (lambda q, b: sale_detail(q.get("id", [0])[0]), "staff"),
+    ("POST", "/api/print"): (lambda q, b: print_receipt(as_int(b.get("id"), "판매")), "staff"),
     ("POST", "/api/sales/void"): (lambda q, b: void_sale(b), "manager"),
     ("GET", "/api/receipts"): (lambda q, b: cash_receipts(q), "manager"),
     ("POST", "/api/receipts/manual"): (lambda q, b: cash_receipt_manual(b), "manager"),
@@ -1561,6 +1656,7 @@ def main():
     init_db(a.seed)
     threading.Thread(target=backup_loop, daemon=True).start()
     print(f"카드단말(VAN): {VAN_URL or '미연동 (승인번호 수기입력 모드)'}")
+    print(f"영수증 프린터: {PRINTER or '미연동 (브라우저 인쇄)'}")
     print(f"자동 백업: {BACKUP_DIR} (하루 1회, {BACKUP_KEEP}일 보관)")
     print(f"POS 실행: http://{a.host}:{a.port}   (DB: {DB_PATH})")
     ThreadingHTTPServer((a.host, a.port), H).serve_forever()

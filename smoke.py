@@ -132,6 +132,10 @@ try:
     check("담당 직원 기록", sale["uname"], "알바")
     check("단말 호출", van_calls[-1]["op"], "approve")
 
+    print("[영수증 프린터]")
+    check("미연동이면 출력 안 함", call("/api/print", {"id": sale["id"]}, STAFF)[1]["printed"], False)
+    check("미연동 사실을 알려준다", who.get("printer"), False, who)
+
     print("[재시도 중복 방지]")
     van_calls.clear()
     body = {"items": [{"product_id": P1, "qty": 1}], "pay_method": "card",

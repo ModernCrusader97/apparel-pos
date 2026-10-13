@@ -355,6 +355,7 @@
 <dialog id="rcpt"><div id="rcptBody"></div>
   <div class="row noprint" style="margin-top:12px;justify-content:flex-end">
     <button onclick="printReceipt()">영수증 인쇄</button>
+    <button id="rcptThermal" hidden onclick="run(thermalPrint)">프린터로 출력</button>
     <button class="pri" onclick="rcptDlg.close();focusScan()">닫기</button>
   </div>
 </dialog>
@@ -723,6 +724,8 @@ function showReceipt(s) {
       ${cr ? `<br>현금영수증(${esc(cr.kind)}) ${esc(cr.approval_no || cr.status)}` : ''}
       ${s.customer ? `<br>${esc(s.customer.name||'')} ${esc(s.customer.phone)}<br>적립 ${s.point_earned}P / 잔여 ${won(s.customer.points)}P` : ''}</div>
     </div>`;
+  rcptId = s.id;
+  $('#rcptThermal').hidden = !ME.printer;
   rcptDlg.showModal();
 }
 
@@ -1203,6 +1206,14 @@ const doBackup = async () => { const r = await api('/api/backups', {});
   toast(`백업 완료 (검증 통과): ${r.file}`); loadBackups(); };
 
 const loadRepAll = async () => { await loadRep(); await loadClosing(); };
+
+/* 감열 프린터가 연동돼 있으면 서버가 직접 쏜다. 미연동이면 이 버튼은 안 보이고
+   지금까지처럼 브라우저 인쇄를 쓴다. */
+let rcptId = null;
+async function thermalPrint() {
+  const r = await api('/api/print', {id: rcptId});
+  toast(r.printed ? '프린터로 출력했습니다' : r.reason, !r.printed);
+}
 
 function printReceipt() {
   document.body.classList.add('print-receipt');

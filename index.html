@@ -447,14 +447,30 @@ const SEL = (lbl, id, opts, cur = '') => `<div class="f"><label>${lbl}</label><s
   opts.map(([v, t]) => `<option value="${v}" ${v === cur ? 'selected' : ''}>${t}</option>`).join('') + '</select></div>';
 
 /* ---------------- 판매 ---------------- */
-async function loadPos() {
-  products = await api('/api/products?q=' + encodeURIComponent($('#scan').value));
-  $('#plist').innerHTML = products.map(p => `<tr>
+const productRow = p => `<tr>
     <td><b>${esc(p.name)}</b> <span class="muted">${esc(p.style_code || p.category)}</span></td>
     <td class="num">${won(p.price)}원</td>
-    <td class="num"><span class="pill ${p.stock<=p.min_stock?'low':''}">재고 ${p.stock}</span></td>
-    <td class="num"><button ${p.stock<1?'disabled':''} onclick="add(${p.id})">담기</button></td></tr>`).join('')
+    <td class="num"><span class="pill ${p.stock<1?'low':p.stock<=p.min_stock?'low':''}">재고 ${p.stock}</span></td>
+    <td class="num"><button ${p.stock<1?'disabled':''} onclick="add(${p.id})">담기</button></td></tr>`;
+
+async function loadPos() {
+  products = await api('/api/products?q=' + encodeURIComponent($('#scan').value));
+  $('#plist').innerHTML = products.map(productRow).join('')
     || '<tr><td class="muted">검색 결과 없음</td></tr>';
+}
+
+/* 품절난 옷을 들고 온 손님에게 "다른 사이즈는요?" 를 바로 답하게 한다.
+   재고가 있는 스캔에서는 부르지 않는다 — 계산대 연속 스캔에 조회를 끼얹지 않기 위해서다. */
+async function showSiblings(p) {
+  const fam = (await api('/api/products?q=' + encodeURIComponent(p.style_code)))
+    .filter(x => x.style_code === p.style_code);
+  products = fam;
+  const have = fam.filter(x => x.stock > 0);
+  $('#plist').innerHTML = `<tr><td colspan="4" style="padding-top:10px">
+      <b class="danger">[${esc(p.name)}] 품절</b>
+      <span class="muted"> · 같은 품번 ${esc(p.style_code)} 재고
+        ${have.length ? `${have.length}종 ${have.reduce((a, x) => a + x.stock, 0)}장` : '없음'}</span>
+    </td></tr>` + fam.map(productRow).join('');
 }
 
 let t; $('#scan').oninput = () => { clearTimeout(t); t = setTimeout(() => run(loadPos), 200); };
@@ -462,7 +478,14 @@ $('#scan').onkeydown = e => {
   if (e.key !== 'Enter') return;
   const v = $('#scan').value.trim();
   const hit = products.find(p => p.barcode === v) || (products.length === 1 ? products[0] : null);
-  if (hit) { add(hit.id); $('#scan').value = ''; run(loadPos); }
+  if (!hit) return;
+  $('#scan').value = '';
+  if (hit.stock < 1) {
+    add(hit.id);                               // 품절 알림은 add() 가 띄운다 (13번)
+    if (hit.style_code) run(() => showSiblings(hit));
+    return;
+  }
+  add(hit.id); run(loadPos);                   // 재고 있는 경우는 지금 그대로
 };
 
 function add(id) {

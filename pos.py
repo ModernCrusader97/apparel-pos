@@ -87,6 +87,9 @@ CREATE TABLE IF NOT EXISTS closings(
   card_total INTEGER NOT NULL, transfer_total INTEGER NOT NULL,
   sales_total INTEGER NOT NULL, sales_count INTEGER NOT NULL,
   memo TEXT DEFAULT '', user_id INTEGER, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS discounts(
+  style_code TEXT PRIMARY KEY, rate INTEGER NOT NULL DEFAULT 0,
+  starts TEXT DEFAULT '', ends TEXT DEFAULT '', at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_sales_at ON sales(at);
 CREATE INDEX IF NOT EXISTS ix_items_sale ON sale_items(sale_id);
@@ -118,6 +121,8 @@ MIGRATIONS = [
     ("products", "style_code", "TEXT DEFAULT ''"),  # 의류: 품번 (색상/사이즈 묶는 단위)
     ("products", "color", "TEXT DEFAULT ''"),
     ("products", "size", "TEXT DEFAULT ''"),
+    ("sales", "list_total", "INTEGER DEFAULT 0"),      # 할인 전 정가 합계
+    ("sale_items", "list_price", "INTEGER DEFAULT 0"),  # 그때의 정가(영수증 재출력용)
 ]
 
 _local = threading.local()
@@ -660,7 +665,12 @@ def list_products(q):
     if q.get("low"):
         sql += " AND stock <= min_stock"
     # name 은 맨 뒤 — 의류는 이름에 색상/사이즈가 붙어 있어 앞에 두면 사이즈 정렬을 덮어쓴다
-    return rows(sql + " ORDER BY style_code, color, " + SIZE_ORDER + ", name LIMIT 500", args)
+    out = rows(sql + " ORDER BY style_code, color, " + SIZE_ORDER + ", name LIMIT 500", args)
+    live = live_discounts()          # 할인가도 서버가 계산해 내려준다
+    for r in out:
+        r["discount_rate"] = live.get(r["style_code"], 0)
+        r["sale_price"] = sale_price(r["price"], r["discount_rate"])
+    return out
 
 
 # 사이즈는 글자라 그냥 정렬하면 L < M < S 가 된다. 알파벳 사이즈는 순서를 박고,
@@ -908,10 +918,55 @@ def customer_detail(cid):
                           " ORDER BY id DESC LIMIT 30", (cid,))}
 
 
+# ------------------------------------------------------------------ 시즌 할인
+def live_discounts(c=None):
+    """오늘 유효한 품번 할인율 {품번: %}. 기간이 비어 있으면 무기한으로 본다."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return {r["style_code"]: r["rate"] for r in (c or db()).execute(
+        "SELECT style_code, rate FROM discounts WHERE rate>0"
+        " AND (starts='' OR starts<=?) AND (ends='' OR ends>=?)", (today, today))}
+
+
+def sale_price(list_price, rate):
+    """정가 − (정가 × 할인율), 원 단위 내림. 사용자가 승인한 식."""
+    return list_price * (100 - rate) // 100
+
+
+def list_discounts(q=None, b=None):
+    need("manager")
+    live = live_discounts()
+    rows_ = rows("SELECT * FROM discounts ORDER BY style_code")
+    for r in rows_:
+        r["active"] = r["style_code"] in live
+    return rows_
+
+
+def save_discount(b):
+    need("manager")
+    style = (b.get("style_code") or "").strip()
+    if not style:
+        raise Bad("품번이 필요합니다")
+    rate = as_int(b.get("rate", 0), "할인율", 0, 100)
+    starts, ends = (b.get("starts") or "").strip(), (b.get("ends") or "").strip()
+    for d in (starts, ends):
+        if d and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+            raise Bad("날짜 형식은 YYYY-MM-DD 입니다")
+    if starts and ends and starts > ends:
+        raise Bad("시작일이 종료일보다 늦습니다")
+    with tx() as c:
+        c.execute("INSERT INTO discounts(style_code,rate,starts,ends,at) VALUES(?,?,?,?,?)"
+                  " ON CONFLICT(style_code) DO UPDATE SET rate=excluded.rate,"
+                  " starts=excluded.starts, ends=excluded.ends, at=excluded.at",
+                  (style, rate, starts, ends, now()))
+        audit(c, "할인설정", f"{style} {rate}% ({starts or '무기한'}~{ends or '무기한'})")
+    return {"style_code": style, "rate": rate}
+
+
 # ---------------------------------------------------------------------- 판매
 def _quote(c, items, discount, point_used, cu):
     """금액 계산 + 재고/포인트 검증. 트랜잭션 안팎 양쪽에서 동일하게 쓴다."""
-    lines, subtotal = [], 0
+    lines, subtotal, list_total = [], 0, 0
+    live = live_discounts(c)                 # 할인율도 서버가 정한다
     for it in items:
         pid = as_int(it.get("product_id"), "상품")
         qty = as_int(it.get("qty"), "수량", 1)
@@ -920,8 +975,11 @@ def _quote(c, items, discount, point_used, cu):
             raise Bad(f"상품 {pid} 없음", 404)
         if p["stock"] < qty:
             raise Bad(f"[{p['name']}] 재고 부족 (현재 {p['stock']}개)")
-        lines.append((pid, p["name"], qty, p["price"]))  # 가격은 서버 DB 기준
-        subtotal += p["price"] * qty
+        lp = p["price"]                                  # 가격은 서버 DB 기준
+        sp = sale_price(lp, live.get(p["style_code"], 0))
+        lines.append((pid, p["name"], qty, sp, lp))
+        subtotal += sp * qty
+        list_total += lp * qty
     if discount > subtotal:
         raise Bad("할인이 판매금액보다 큽니다")
     if point_used:
@@ -937,7 +995,7 @@ def _quote(c, items, discount, point_used, cu):
     total = subtotal - discount - point_used
     rate = setting("point_rate", int) or 0
     earned = (total * rate) // 100 if cu else 0  # 포인트로 낸 금액은 적립 제외
-    return lines, subtotal, total, earned
+    return lines, subtotal, total, earned, list_total
 
 
 def create_sale(b):
@@ -965,7 +1023,7 @@ def create_sale(b):
         raise Bad("고객을 찾을 수 없습니다", 404)
 
     # 1) 금액 확정 (읽기 전용)
-    _, _, quoted, _ = _quote(c, items, discount, point_used, cu)
+    _, _, quoted, _, _ = _quote(c, items, discount, point_used, cu)
 
     # 2) 카드 승인 — 네트워크 호출이라 트랜잭션 **밖**에서 한다
     approval = (b.get("approval_no") or "").strip()
@@ -980,18 +1038,18 @@ def create_sale(b):
     # 3) 기록 — 여기서 실패하면 2)의 승인을 되돌려야 한다
     try:
         with tx() as c:
-            lines, subtotal, total, earned = _quote(c, items, discount, point_used, cu)
+            lines, subtotal, total, earned, list_total = _quote(c, items, discount, point_used, cu)
             if total != quoted:
                 raise Bad("계산 중 가격/재고가 변경되었습니다. 다시 시도하세요", 409)
             sid = c.execute(
                 "INSERT INTO sales(customer_id,subtotal,discount,point_used,point_earned,"
-                "total,pay_method,approval_no,card_name,installment,user_id,at)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                "total,pay_method,approval_no,card_name,installment,user_id,at,list_total)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, subtotal, discount, point_used, earned, total, pay, approval,
-                 card_name, install, me()["uid"], now())).lastrowid
-            for pid, pname, qty, price in lines:
-                c.execute("INSERT INTO sale_items(sale_id,product_id,name,qty,price)"
-                          " VALUES(?,?,?,?,?)", (sid, pid, pname, qty, price))
+                 card_name, install, me()["uid"], now(), list_total)).lastrowid
+            for pid, pname, qty, price, lp in lines:
+                c.execute("INSERT INTO sale_items(sale_id,product_id,name,qty,price,list_price)"
+                          " VALUES(?,?,?,?,?,?)", (sid, pid, pname, qty, price, lp))
                 c.execute("UPDATE products SET stock=stock-? WHERE id=?", (qty, pid))
                 c.execute("INSERT INTO stock_moves(product_id,delta,reason,sale_id,"
                           "user_id,at) VALUES(?,?,'판매',?,?,?)",
@@ -1103,7 +1161,7 @@ def report(q):
     sm = db().execute(
         "SELECT COUNT(*) n, COALESCE(SUM(total),0) total, COALESCE(SUM(discount),0) disc,"
         " COALESCE(SUM(point_used),0) used, COALESCE(SUM(point_earned),0) earned,"
-        f" COALESCE(SUM(subtotal),0) gross FROM sales {live}", (a, b)).fetchone()
+        f" COALESCE(SUM(subtotal),0) gross,  COALESCE(SUM(CASE WHEN list_total>0 THEN list_total-subtotal ELSE 0 END),0) season  FROM sales {live}", (a, b)).fetchone()
     return {
         "summary": dict(sm),
         "by_pay": rows(f"SELECT pay_method, COUNT(*) n, SUM(total) total FROM sales {live}"
@@ -1338,6 +1396,8 @@ ROUTES = {
     ("POST", "/api/backups"): (lambda q, b: backup_api(b), "owner"),
     ("GET", "/api/tax"): (lambda q, b: tax_summary(q), "manager"),
     ("GET", "/api/reorder"): (lambda q, b: reorder(q), "manager"),
+    ("GET", "/api/discounts"): (list_discounts, "manager"),
+    ("POST", "/api/discounts"): (lambda q, b: save_discount(b), "manager"),
     ("GET", "/api/settings"): (get_settings, "staff"),
     ("POST", "/api/settings"): (lambda q, b: save_settings(b), "owner"),
 }

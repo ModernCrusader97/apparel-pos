@@ -489,7 +489,9 @@ const SEL = (lbl, id, opts, cur = '') => `<div class="f"><label>${lbl}</label><s
 /* ---------------- 판매 ---------------- */
 const productRow = p => `<tr>
     <td><b>${esc(p.name)}</b> <span class="muted">${esc(p.style_code || p.category)}</span></td>
-    <td class="num">${won(p.price)}원</td>
+    <td class="num">${p.sale_price !== undefined && p.sale_price !== p.price
+        ? `<s class="muted">${won(p.price)}</s> <b class="danger">${won(p.sale_price)}원</b>`
+        : won(p.price) + '원'}</td>
     <td class="num"><span class="pill ${p.stock<1?'low':p.stock<=p.min_stock?'low':''}">재고 ${p.stock}</span></td>
     <td class="num"><button ${p.stock<1?'disabled':''} onclick="add(${p.id})">담기</button></td></tr>`;
 
@@ -535,7 +537,8 @@ function add(id) {
   if (p.stock < 1) return toast(`[${p.name}] 품절입니다`, true);
   const line = cart.find(l => l.id === id);
   if (line) { if (line.qty >= p.stock) return toast('재고 초과', true); line.qty++; }
-  else cart.push({id, name:p.name, price:p.price, qty:1, stock:p.stock});
+  else cart.push({id, name:p.name, price:p.sale_price ?? p.price,
+                  list_price:p.price, qty:1, stock:p.stock});
   calc();
 }
 const setQty = (id, d) => { const l = cart.find(x => x.id === id); l.qty += d;
@@ -547,7 +550,8 @@ function clearCart() { cart = []; customer = null; $('#cphone').value = ''; $('#
 function calc() {
   $('#cartEmpty').hidden = cart.length > 0;
   $('#cart').innerHTML = cart.map(l => `<tr>
-    <td>${esc(l.name)}<div class="muted">${won(l.price)}원</div></td>
+    <td>${esc(l.name)}<div class="muted">${l.list_price && l.list_price !== l.price
+      ? `<s>${won(l.list_price)}</s> ${won(l.price)}원` : won(l.price) + '원'}</div></td>
     <td class="num" style="white-space:nowrap">
       <button class="qty" onclick="setQty(${l.id},-1)">−</button>
       <b style="display:inline-block;min-width:28px;text-align:center">${l.qty}</b>
@@ -596,7 +600,8 @@ async function restoreCart() {
     const qty = Math.min(it.qty, p.stock);
     if (qty < 1) { warn.push(`${p.name} 품절`); continue; }
     if (qty < it.qty) warn.push(`${p.name} ${it.qty}→${qty}장 (재고)`);
-    cart.push({id:p.id, name:p.name, price:p.price, qty, stock:p.stock});
+    cart.push({id:p.id, name:p.name, price:p.sale_price ?? p.price,
+               list_price:p.price, qty, stock:p.stock});
   }
   if (saved.cid) {
     try { pickCustomer((await api('/api/customer?id=' + saved.cid)).customer); } catch {}
@@ -689,8 +694,13 @@ function showReceipt(s) {
       ${st.store_tel ? `<br><span class="muted">${esc(st.store_tel)}</span>` : ''}
     </div><hr>
     <div class="muted">${esc(s.at.replace('T',' '))} · No.${s.id} · ${esc(s.uname||'')}</div><hr>
-    ${s.items.map(i => `<div class="tot"><span>${esc(i.name)} x${i.qty}</span><span>${won(i.price*i.qty)}</span></div>`).join('')}
+    ${s.items.map(i => `<div class="tot"><span>${esc(i.name)} x${i.qty}${
+        i.list_price && i.list_price !== i.price ? ` <s>${won(i.list_price)}</s>` : ''}</span>
+        <span>${won(i.price*i.qty)}</span></div>`).join('')}
     <hr>
+    ${s.list_total && s.list_total !== s.subtotal
+      ? `<div class="tot"><span>정가</span><span>${won(s.list_total)}</span></div>
+         <div class="tot"><span>시즌할인</span><span>-${won(s.list_total - s.subtotal)}</span></div>` : ''}
     <div class="tot"><span>소계</span><span>${won(s.subtotal)}</span></div>
     ${s.discount ? `<div class="tot"><span>할인</span><span>-${won(s.discount)}</span></div>` : ''}
     ${s.point_used ? `<div class="tot"><span>포인트사용</span><span>-${won(s.point_used)}</span></div>` : ''}
@@ -730,8 +740,10 @@ function renderMatrix(list) {
     const sum = items.reduce((a, i) => a + i.stock, 0);
     return `<h3 class="sec" style="margin-top:14px">${esc(code)} · ${esc(title(items[0]))}
         <span class="muted">${won(items[0].price)}원 · 총 ${sum}장</span>
+        ${items[0].discount_rate ? `<span class="pill low">${items[0].discount_rate}% 할인중</span>` : ''}
         ${can('manager') ? `<button class="noprint" style="margin-left:8px"
-          onclick="tagDlg('${esc(code)}')">택 바코드 등록</button>` : ''}</h3>
+          onclick="tagDlg('${esc(code)}')">택 바코드 등록</button>
+          <button class="noprint" onclick='discDlg(${esc(JSON.stringify(code))})'>할인</button>` : ''}</h3>
       <table><thead><tr><th>색상</th>${sizes.map(s => `<th class="num">${esc(s)}</th>`).join('')}<th class="num">합계</th></tr></thead>
       <tbody>${colors.map(c => {
         const row = sizes.map(s => at(c, s));
@@ -901,6 +913,22 @@ function editProduct(p) {
     });
 }
 
+/* 품번 단위 시즌 할인. 적용은 서버가 한다 — 화면은 설정만 보낸다. */
+async function discDlg(style) {
+  const cur = (await api('/api/discounts')).find(d => d.style_code === style) || {};
+  dlg(`시즌 할인 — ${esc(style)}`,
+    F('할인율 (%)', 'dcRate', cur.rate || 0, 'number', 'min="0" max="100"') +
+    F('시작일 (비우면 무기한)', 'dcFrom', cur.starts || '', 'date') +
+    F('종료일 (비우면 무기한)', 'dcTo', cur.ends || '', 'date') +
+    '<div class="muted">판매가 = 정가 − (정가 × 할인율), 원 단위 내림.<br>' +
+    '이미 팔린 건의 금액은 바뀌지 않습니다.</div>',
+    async () => {
+      await api('/api/discounts', {style_code:style, rate:$('#dcRate').value,
+        starts:$('#dcFrom').value, ends:$('#dcTo').value});
+      toast('할인을 설정했습니다'); run(loadInv);
+    }, '저장');
+}
+
 /* 제조사 택 바코드를 SKU 에 연결한다. 일괄등록이 만든 '품번-색상-사이즈' 는
    실제 옷에 없으므로, 그대로 두면 매장에서 스캔 자체를 못 한다.
    상품수정 창에도 바코드 칸은 있다 — 여기가 하는 일은 '연속 등록'이다. */
@@ -1049,7 +1077,8 @@ async function loadRep() {
       <div><div class="muted">매출</div><div class="big">${won(s.total)}원</div></div>
       <div><div class="muted">건수</div><div class="big">${won(s.n)}</div></div>
       <div><div class="muted">객단가</div><div class="big">${won(s.n ? Math.round(s.total/s.n) : 0)}원</div></div>
-      <div><div class="muted">할인</div><div class="big">${won(s.disc)}원</div></div>
+      <div><div class="muted">시즌할인</div><div class="big">${won(s.season)}원</div></div>
+      <div><div class="muted">수기할인</div><div class="big">${won(s.disc)}원</div></div>
       <div><div class="muted">포인트 사용/적립</div><div class="big">${won(s.used)} / ${won(s.earned)}</div></div>
     </div>
     <div class="g2">

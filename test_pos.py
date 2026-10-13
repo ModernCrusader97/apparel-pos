@@ -336,6 +336,70 @@ fails(lambda: pos.save_closing({"counted_cash": -1}), "실제 현금")
 tomorrow = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
 assert pos.closing_status(tomorrow)["opening_cash"] == st4["expected_cash"]
 
+# ----------------------------------------------------------------- 시즌 할인
+act_as("manager")
+pos.save_product_bulk({"style_code": "SS-01", "name": "시즌테스트", "price": 10000,
+                       "cost": 4000, "colors": "블랙", "sizes": "S", "stock": 100})
+SS = pos.list_products({"q": ["SS-01"]})[0]["id"]
+today = pos.datetime.now().strftime("%Y-%m-%d")
+yday = (pos.datetime.now() - pos.timedelta(days=1)).strftime("%Y-%m-%d")
+tmrw = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
+
+# 할인 없을 때
+act_as("staff")
+s = pos.create_sale({"items": [{"product_id": SS, "qty": 2}], "pay_method": "cash"})
+assert (s["list_total"], s["subtotal"], s["total"]) == (20000, 20000, 20000), s
+
+# 30% 할인 — 판매가 = 정가 - (정가 x 30%), 원 단위 내림
+act_as("manager")
+pos.save_discount({"style_code": "SS-01", "rate": 30, "starts": today, "ends": tmrw})
+act_as("staff")
+s = pos.create_sale({"items": [{"product_id": SS, "qty": 2}], "pay_method": "cash"})
+assert s["items"][0]["price"] == 7000 and s["items"][0]["list_price"] == 10000, s["items"]
+assert (s["list_total"], s["subtotal"], s["total"]) == (20000, 14000, 14000), s
+
+# 건별 수기할인·포인트는 **할인된 소계** 에서 뺀다
+C2 = pos.save_customer({"phone": "010-7777-8888", "name": "할인고객"})["id"]
+act_as("manager")
+pos.adjust_points({"customer_id": C2, "delta": 5000, "reason": "테스트"})
+act_as("staff")
+s = pos.create_sale({"items": [{"product_id": SS, "qty": 2}], "customer_id": C2,
+                     "discount": 1000, "point_used": 2000, "pay_method": "cash"})
+assert (s["subtotal"], s["discount"], s["point_used"], s["total"]) == (14000, 1000, 2000, 11000), s
+assert s["point_earned"] == 11000 * 10 // 100, s        # 적립은 결제금액 기준 (적립률 10%)
+
+# 기간 밖이면 정가
+act_as("manager")
+pos.save_discount({"style_code": "SS-01", "rate": 30, "starts": yday, "ends": yday})
+act_as("staff")
+assert pos.create_sale({"items": [{"product_id": SS, "qty": 1}],
+                        "pay_method": "cash"})["total"] == 10000
+# 0% 로 되돌리면 정가
+act_as("manager")
+pos.save_discount({"style_code": "SS-01", "rate": 0, "starts": "", "ends": ""})
+act_as("staff")
+assert pos.create_sale({"items": [{"product_id": SS, "qty": 1}],
+                        "pay_method": "cash"})["total"] == 10000
+
+# 할인율을 바꿔도 **과거 판매 금액은 안 변한다**
+# s 는 30% 할인 때 판 건(판매가 7,000 / 정가 10,000 / 결제 11,000)
+act_as("manager")
+pos.save_discount({"style_code": "SS-01", "rate": 70, "starts": today, "ends": tmrw})
+again = pos.sale_detail(s["id"])
+assert (again["items"][0]["price"], again["items"][0]["list_price"]) == (7000, 10000), again["items"]
+assert (again["subtotal"], again["total"]) == (14000, 11000), again
+
+# 방어
+fails(lambda: pos.save_discount({"style_code": "SS-01", "rate": 101}), "할인율")
+fails(lambda: pos.save_discount({"style_code": "SS-01", "rate": -1}), "할인율")
+fails(lambda: pos.save_discount({"style_code": "", "rate": 10}), "품번")
+fails(lambda: pos.save_discount({"style_code": "SS-01", "rate": 10, "starts": "2026/01/01"}), "날짜")
+act_as("staff")
+fails(lambda: pos.save_discount({"style_code": "SS-01", "rate": 10}), "매니저 이상")
+act_as("manager")
+assert any(a["action"] == "할인설정" for a in (act_as("owner"), pos.audit_log({}))[1]), "감사 로그 없음"
+act_as("manager")
+
 # ----------------------------------------------------------------- 재고 실사
 act_as("manager")
 pos.save_product_bulk({"style_code": "CNT-01", "name": "실사테스트", "price": 10000,

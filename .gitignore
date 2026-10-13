@@ -11,3 +11,6 @@ uibackup/
 smoke-backup/
 # 루프 스케줄러가 만드는 잠금 파일
 .claude/
+# 데모용 DB·백업
+demo.db*
+demobackup/

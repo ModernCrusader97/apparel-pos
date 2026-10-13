@@ -69,6 +69,34 @@
     border-radius:8px;padding:10px 12px;margin-bottom:12px;line-height:1.7}
   #closeWarn b{color:var(--warn)}
   #closeWarn button{margin-left:6px}
+  /* ---- 폰 폭(560px 미만) ----
+     탭 7개가 헤더에서 3줄로 접혀 화면의 20%를 먹었고, 상품 행은 이름과 '담기'가
+     세로로 쪼개져 한 줄이 96px 였다. 좁을 때만 배치를 바꾼다. */
+  @media (max-width:560px){
+    header{flex-wrap:wrap;row-gap:2px}
+    header b{font-size:15px;margin-right:8px}
+    header .who{margin-left:auto;white-space:nowrap;display:flex;align-items:center;gap:6px}
+    header .who button{white-space:nowrap;padding:6px 10px;min-height:36px}
+    /* 탭은 제 줄을 통째로 쓰고, 넘치면 옆으로 민다 — 접히는 것보다 예측 가능하다 */
+    nav{order:3;width:100%;display:flex;flex-wrap:nowrap;overflow-x:auto;
+        scrollbar-width:none;-webkit-overflow-scrolling:touch}
+    nav::-webkit-scrollbar{display:none}
+    nav button{flex:0 0 auto;white-space:nowrap}
+
+    /* 상품 행: 이름을 한 줄 통째로 주고, 가격·재고·담기를 아랫줄에 모은다 */
+    #plist tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;
+              padding:6px 0;border-bottom:1px solid var(--line)}
+    #plist td{border:0;padding:0}
+    #plist td:first-child{flex:1 0 100%}
+    #plist td:last-child{margin-left:auto}
+    #plist button{white-space:nowrap}
+    /* 장바구니도 같은 이유로 품명을 한 줄 통째로 */
+    #cart tr{display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;
+             padding:6px 0;border-bottom:1px solid var(--line)}
+    #cart td{border:0;padding:0}
+    #cart td:first-child{flex:1 0 100%}
+    main{padding:10px 8px}
+  }
   @media print{
     /* body.ui-touch 보다 명시도가 낮으면 큰버튼 모드에서 무시된다 — 같이 적어 준다 */
     :root,body.ui-touch,body.ui-mouse{--ctl-py:4px;--ctl-px:6px;--ctl-fs:12px;--tap:0px;--cell-py:4px}

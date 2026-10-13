@@ -132,6 +132,17 @@ try:
     check("담당 직원 기록", sale["uname"], "알바")
     check("단말 호출", van_calls[-1]["op"], "approve")
 
+    print("[재시도 중복 방지]")
+    van_calls.clear()
+    body = {"items": [{"product_id": P1, "qty": 1}], "pay_method": "card",
+            "req_key": "smoke-retry-1"}
+    _, one, _ = call("/api/sales", body, STAFF)
+    _, two, _ = call("/api/sales", body, STAFF)     # 끊겨서 다시 누른 상황
+    check("같은 키는 같은 판매", two["id"], one["id"], (one["id"], two["id"]))
+    check("카드는 한 번만 승인", [c["op"] for c in van_calls], ["approve"], van_calls)
+    _, three, _ = call("/api/sales", {**body, "req_key": "smoke-retry-2"}, STAFF)
+    check("다른 키는 새 판매", three["id"] != one["id"], True)
+
     print("[판매 · 현금영수증]")
     st, cash, _ = call("/api/sales", {"items": [{"product_id": P2, "qty": 1}],
                                       "pay_method": "cash",

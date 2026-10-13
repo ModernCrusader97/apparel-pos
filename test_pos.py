@@ -336,6 +336,56 @@ fails(lambda: pos.save_closing({"counted_cash": -1}), "실제 현금")
 tomorrow = (pos.datetime.now() + pos.timedelta(days=1)).strftime("%Y-%m-%d")
 assert pos.closing_status(tomorrow)["opening_cash"] == st4["expected_cash"]
 
+# -------------------------------------------------------------- 요청 키(멱등성)
+act_as("manager")
+pos.save_product({"name": "멱등테스트", "price": 5000, "cost": 2000, "stock": 50})
+IDEM = pos.list_products({"q": ["멱등테스트"]})[0]["id"]
+stock0 = pos.list_products({"q": ["멱등테스트"]})[0]["stock"]
+act_as("staff")
+
+# 같은 키로 두 번 → 판매 한 건, 두 번째는 첫 결과를 그대로 돌려준다
+a = pos.create_sale({"items": [{"product_id": IDEM, "qty": 2}], "pay_method": "cash",
+                     "req_key": "key-aaa"})
+b2 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 2}], "pay_method": "cash",
+                      "req_key": "key-aaa"})
+assert a["id"] == b2["id"], (a["id"], b2["id"])
+assert pos.list_products({"q": ["멱등테스트"]})[0]["stock"] == stock0 - 2, "재고가 두 번 깎였다"
+assert len(pos.rows("SELECT id FROM sales WHERE req_key='key-aaa'")) == 1
+
+# 내용이 달라도 같은 키면 첫 결과를 돌려준다 (재시도이지 새 판매가 아니다)
+c3 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 9}], "pay_method": "card",
+                      "req_key": "key-aaa"})
+assert c3["id"] == a["id"] and c3["total"] == a["total"], c3
+
+# 다른 키는 새 판매
+d = pos.create_sale({"items": [{"product_id": IDEM, "qty": 1}], "pay_method": "cash",
+                     "req_key": "key-bbb"})
+assert d["id"] != a["id"]
+# 키 없이 보내면 지금까지와 똑같이 매번 새 판매 (하위호환)
+e1 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 1}], "pay_method": "cash"})
+e2 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 1}], "pay_method": "cash"})
+assert e1["id"] != e2["id"]
+
+# 재시도로 카드가 두 번 승인되면 안 된다 — 키 확인이 VAN 호출보다 먼저여야 한다
+van_calls2 = []
+
+
+def fake_van2(op, payload):
+    van_calls2.append(op)
+    return {"ok": True, "approval_no": "VAN-IDEM", "card_name": "신한"}
+
+
+pos.VAN_URL, _real = "http://fake", pos.van
+pos.van = fake_van2
+f1 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 1}], "pay_method": "card",
+                      "req_key": "key-card"})
+f2 = pos.create_sale({"items": [{"product_id": IDEM, "qty": 1}], "pay_method": "card",
+                      "req_key": "key-card"})
+assert f1["id"] == f2["id"]
+assert van_calls2 == ["approve"], f"카드가 {len(van_calls2)}번 승인됐다: {van_calls2}"
+pos.van, pos.VAN_URL = _real, None
+act_as("manager")
+
 # ----------------------------------------------------------------- 시즌 할인
 act_as("manager")
 pos.save_product_bulk({"style_code": "SS-01", "name": "시즌테스트", "price": 10000,

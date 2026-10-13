@@ -121,6 +121,7 @@ MIGRATIONS = [
     ("products", "style_code", "TEXT DEFAULT ''"),  # 의류: 품번 (색상/사이즈 묶는 단위)
     ("products", "color", "TEXT DEFAULT ''"),
     ("products", "size", "TEXT DEFAULT ''"),
+    ("sales", "req_key", "TEXT"),                      # 재시도 중복 판매 방지
     ("sales", "list_total", "INTEGER DEFAULT 0"),      # 할인 전 정가 합계
     ("sale_items", "list_price", "INTEGER DEFAULT 0"),  # 그때의 정가(영수증 재출력용)
 ]
@@ -1017,6 +1018,14 @@ def create_sale(b):
             raise Bad("현금영수증 용도를 선택하세요")
         cr_ident = norm_ident(cr_kind, cr.get("ident_no"))
 
+    # 통신이 끊겨 계산원이 다시 눌렀을 때를 위한 키. **VAN 승인보다 먼저** 본다 —
+    # 판매가 두 건 생기는 것보다 카드가 두 번 승인되는 게 더 큰 사고다.
+    req_key = (b.get("req_key") or "").strip()[:64] or None
+    if req_key:
+        done = db().execute("SELECT id FROM sales WHERE req_key=?", (req_key,)).fetchone()
+        if done:
+            return sale_detail(done["id"])      # 재시도다. 첫 결과를 그대로 돌려준다
+
     c = db()
     cu = c.execute("SELECT * FROM customers WHERE id=?", (cid,)).fetchone() if cid else None
     if cid and not cu:
@@ -1043,10 +1052,10 @@ def create_sale(b):
                 raise Bad("계산 중 가격/재고가 변경되었습니다. 다시 시도하세요", 409)
             sid = c.execute(
                 "INSERT INTO sales(customer_id,subtotal,discount,point_used,point_earned,"
-                "total,pay_method,approval_no,card_name,installment,user_id,at,list_total)"
-                " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "total,pay_method,approval_no,card_name,installment,user_id,at,list_total,"
+                "req_key) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (cid, subtotal, discount, point_used, earned, total, pay, approval,
-                 card_name, install, me()["uid"], now(), list_total)).lastrowid
+                 card_name, install, me()["uid"], now(), list_total, req_key)).lastrowid
             for pid, pname, qty, price, lp in lines:
                 c.execute("INSERT INTO sale_items(sale_id,product_id,name,qty,price,list_price)"
                           " VALUES(?,?,?,?,?,?)", (sid, pid, pname, qty, price, lp))
@@ -1066,6 +1075,12 @@ def create_sale(b):
                     c.execute("INSERT INTO point_moves(customer_id,delta,reason,sale_id,"
                               "user_id,at) VALUES(?,?,'적립',?,?,?)",
                               (cid, earned, sid, me()["uid"], now()))
+    except sqlite3.IntegrityError:
+        # 같은 키가 동시에 들어와 인덱스에 막힌 경우. 먼저 들어간 쪽 결과를 돌려준다.
+        done = db().execute("SELECT id FROM sales WHERE req_key=?", (req_key,)).fetchone()
+        if done:
+            return sale_detail(done["id"])
+        raise
     except Exception:
         if van_res:  # 카드는 승인됐는데 DB 기록이 깨진 경우 - 승인 취소
             try:
@@ -1506,6 +1521,9 @@ def init_db(seed=False):
     for table, col, decl in MIGRATIONS:
         if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
             c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
+    # 컬럼이 생긴 뒤에 걸어야 한다. 동시에 들어온 같은 키를 DB 가 막아 준다.
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_sales_reqkey ON sales(req_key)"
+              " WHERE req_key IS NOT NULL")
 
     if not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
         pw = os.environ.get("POS_ADMIN_PW", "admin1234")

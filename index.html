@@ -544,7 +544,8 @@ function add(id) {
 const setQty = (id, d) => { const l = cart.find(x => x.id === id); l.qty += d;
   if (l.qty < 1 || l.qty > l.stock) l.qty -= d; calc(); };
 const del = id => { cart = cart.filter(x => x.id !== id); calc(); };
-function clearCart() { cart = []; customer = null; $('#cphone').value = ''; $('#cinfo').textContent = '비회원';
+function clearCart() { cart = []; customer = null; payKey = null;
+  $('#cphone').value = ''; $('#cinfo').textContent = '비회원';
   $('#tDisc').value = 0; $('#tPoint').value = 0; calc(); focusScan(); }
 
 function calc() {
@@ -657,9 +658,16 @@ function payDlg() {
   dlg('결제', html, checkout, '결제 확정');
 }
 
+/* 통신이 끊겨 다시 눌렀을 때 같은 판매로 치게 하는 키.
+   결제 다이얼로그를 열 때 한 번 만들고, 성공해야 버린다 — 재시도는 같은 키로 나가야 한다. */
+let payKey = null;
+
 async function checkout() {
   const pay = $('#pay').value;
+  payKey = payKey || (crypto.randomUUID ? crypto.randomUUID()
+                      : Date.now() + '-' + Math.random().toString(36).slice(2));
   const body = {
+    req_key: payKey,
     items: cart.map(l => ({product_id:l.id, qty:l.qty})),
     customer_id: customer?.id ?? null,
     discount: +$('#tDisc').value || 0,
@@ -672,6 +680,7 @@ async function checkout() {
   const r = await api('/api/sales', body);
   if (r.cash_receipt && r.cash_receipt.status !== '발급')
     toast('현금영수증 ' + r.cash_receipt.status + ': ' + r.cash_receipt.message, true);
+  payKey = null;                      // 성공했으니 다음 판매는 새 키
   setLastSale(r.id); showReceipt(r); clearCart(); run(loadPos);
 }
 

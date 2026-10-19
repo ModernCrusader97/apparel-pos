@@ -24,7 +24,7 @@ def act_as(role):
 
 pos.init_db()
 act_as("owner")
-pos.save_settings({"point_rate": "10", "point_min_use": "0", "store_biz_no": "220-81-62517"})
+pos.save_settings({"point_rate": "10", "point_min_use": "0", "store_biz_no": "000-00-00000"})
 
 # ---------------------------------------------------------------- 계정 / 권한
 assert pos.verify_pw("owner123", pos.db().execute(
@@ -50,7 +50,7 @@ fails(lambda: pos.audit_log({}), "점주 이상")
 
 # 사업자번호 체크섬
 act_as("owner")
-fails(lambda: pos.save_settings({"store_biz_no": "220-81-62518"}), "올바르지 않습니다")
+fails(lambda: pos.save_settings({"store_biz_no": "000-00-00001"}), "올바르지 않습니다")
 
 # ------------------------------------------------------------- 로그인 시도 제한
 pos.LOGIN_FAILS.clear()
@@ -169,7 +169,7 @@ assert pos.adjust_points({"customer_id": C, "delta": -500, "reason": "오적립 
 act_as("staff")
 assert pos.norm_ident("소득공제", "010-1234-5678") == "01012345678"
 fails(lambda: pos.norm_ident("소득공제", "123"), "식별번호")
-fails(lambda: pos.norm_ident("지출증빙", "220-81-62518"), "올바르지 않습니다")
+fails(lambda: pos.norm_ident("지출증빙", "000-00-00001"), "올바르지 않습니다")
 s = pos.create_sale({"items": [{"product_id": A, "qty": 1}], "pay_method": "cash",
                      "cash_receipt": {"kind": "소득공제", "ident_no": "010-1234-5678"}})
 assert s["cash_receipt"]["status"] == "대기", s  # VAN 미연동이므로 수기입력 대기
@@ -237,7 +237,7 @@ assert len(pos.report_csv({}).splitlines()) > 1
 
 act_as("staff")
 BIZ = pos.save_customer({"phone": "010-9999-8888", "name": "박사장",
-                         "business_no": "220-81-62517", "biz_name": "(주)박사장상사",
+                         "business_no": "000-00-00000", "biz_name": "(주)박사장상사",
                          "biz_email": "biz@example.com"})["id"]
 fails(lambda: pos.save_customer({"phone": "010-9999-7777", "biz_email": "엉뚱주소"}), "이메일")
 pos.create_sale({"items": [{"product_id": A, "qty": 2}], "customer_id": BIZ, "pay_method": "transfer"})

@@ -1640,7 +1640,7 @@ def init_db(seed=False):
                                "price": price, "colors": colors, "sizes": sizes,
                                "stock": stock, "min_stock": 2, "category": cat})
         save_customer({"phone": "010-1111-2222", "name": "김단골"})
-        save_customer({"phone": "010-3333-4444", "name": "박사장", "business_no": "2208162517",
+        save_customer({"phone": "010-3333-4444", "name": "박사장", "business_no": "0000000000",
                        "biz_name": "(주)박사장상사", "biz_ceo": "박사장",
                        "biz_email": "biz@example.com", "biz_item": "도소매"})
         _local.user = None

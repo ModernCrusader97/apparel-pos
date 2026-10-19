@@ -14,3 +14,6 @@ smoke-backup/
 # 데모용 DB·백업
 demo.db*
 demobackup/
+
+# 데모·개발 산출물
+printed.txt
